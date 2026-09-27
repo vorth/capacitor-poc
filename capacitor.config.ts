@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.example.capacitorpoc',
-  appName: 'Capacitor POC',
+  appName: 'CheckrSpot2',
   webDir: 'dist'
 };
 
