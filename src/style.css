@@ -7,7 +7,6 @@
   --muted: #6b7280;
   --accent: #2563eb;
   --accent-press: #1d4ed8;
-  --error: #dc2626;
   --border: #e5e7eb;
   --fix-poor: #d97706;
   --fix-poor-press: #b45309;
@@ -23,7 +22,6 @@
     --muted: #9ca3af;
     --accent: #3b82f6;
     --accent-press: #2563eb;
-    --error: #f87171;
     --border: #2a2e3a;
     --fix-poor: #d97706;
     --fix-poor-press: #b45309;
@@ -31,42 +29,44 @@
     --fix-good-press: #15803d;
   }
 }
-
 * {
   box-sizing: border-box;
 }
 
+html,
+body {
+  height: 100%;
+}
+
 body {
   margin: 0;
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   background: var(--bg);
   color: var(--fg);
+}
+
+/* Full-height column: the readings panel scrolls, the capture button stays
+   pinned at the bottom. */
+#app {
+  height: 100dvh;
+  max-width: 26rem;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
   padding: max(1rem, env(safe-area-inset-top)) 1rem
     max(1rem, env(safe-area-inset-bottom));
 }
 
 .card {
-  width: 100%;
-  max-width: 26rem;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 1rem;
-  padding: 1.75rem;
+  padding: 0.5rem 0;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
-}
-
-h1 {
-  margin: 0 0 0.25rem;
-  font-size: 1.5rem;
-}
-
-.platform {
-  margin: 0 0 1.25rem;
-  color: var(--muted);
-  font-size: 0.9rem;
 }
 
 button {
@@ -86,16 +86,13 @@ button:hover:not(:disabled) {
   background: var(--accent-press);
 }
 
-button:disabled {
-  opacity: 0.6;
-  cursor: progress;
-}
-
 #fix-btn {
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 0.75rem;
+  padding: 1rem;
 }
 
 #fix-btn.no-fix {
@@ -130,21 +127,75 @@ button:disabled {
   fill: currentColor;
 }
 
-.status {
-  margin-top: 1rem;
-  font-size: 0.9rem;
-  color: var(--muted);
-  min-height: 1.2em;
+.history-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.status.error {
-  color: var(--error);
+.history-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+.history-list .reading {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1.25rem;
+  font-size: 1.19rem;
+  font-weight: 400;
+  text-align: left;
+  color: var(--fg);
+  background: none;
+  border-radius: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-list .reading .time {
+  font-weight: 700;
+}
+
+.history-list .reading:hover,
+.history-list .reading:active {
+  background: var(--border);
+}
+
+.history-list:empty::after {
+  content: 'No readings yet.';
+  display: block;
+  padding: 0.75rem 1.25rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.inspector {
+  width: min(22rem, calc(100% - 2rem));
+  padding: 1.25rem 1.5rem;
+  color: var(--fg);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+}
+
+.inspector::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.inspector h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.1rem;
+  font-weight: 400;
+}
+
+.inspector h2 .time {
+  margin-left: 25px;
+  font-weight: 700;
 }
 
 .result {
-  margin: 1.25rem 0 0;
+  margin: 0 0 1.25rem;
   display: grid;
-  gap: 0.5rem;
 }
 
 .result > div {
@@ -166,38 +217,7 @@ dt {
 
 dd {
   margin: 0;
+  text-align: right;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
-}
-
-.history {
-  margin-top: 1.5rem;
-  border-top: 1px solid var(--border);
-  padding-top: 1rem;
-}
-
-.history h2 {
-  margin: 0 0 0.6rem;
-  font-size: 0.95rem;
-  font-weight: 600;
-}
-
-.history-list {
-  margin: 0;
-  padding-left: 1.25rem;
-  display: grid;
-  gap: 0.4rem;
-}
-
-.history-list li {
-  font-size: 0.8rem;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.history-list:empty::after {
-  content: 'No readings yet.';
-  color: var(--muted);
-  font-size: 0.85rem;
-  margin-left: -1.25rem;
 }
