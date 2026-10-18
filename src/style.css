@@ -7,6 +7,7 @@
   --muted: #6b7280;
   --accent: #2563eb;
   --accent-press: #1d4ed8;
+  --danger: #dc2626;
   --border: #e5e7eb;
   --fix-poor: #d97706;
   --fix-poor-press: #b45309;
@@ -22,6 +23,7 @@
     --muted: #9ca3af;
     --accent: #3b82f6;
     --accent-press: #2563eb;
+    --danger: #ef4444;
     --border: #2a2e3a;
     --fix-poor: #d97706;
     --fix-poor-press: #b45309;
@@ -31,6 +33,10 @@
 }
 * {
   box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 html,
@@ -86,6 +92,52 @@ button:hover:not(:disabled) {
   background: var(--accent-press);
 }
 
+.toolbar {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Plain tinted-text and icon buttons, as in iOS navigation bars and toolbars. */
+.text-btn,
+.icon-btn {
+  width: auto;
+  font-weight: 400;
+  color: var(--accent);
+  background: none;
+}
+
+.text-btn {
+  padding: 0.25rem 0.5rem;
+  font-size: 1.06rem;
+}
+
+.icon-btn {
+  padding: 1rem;
+}
+
+.text-btn:hover:not(:disabled),
+.icon-btn:hover:not(:disabled) {
+  background: none;
+  opacity: 0.7;
+}
+
+.text-btn:disabled,
+.icon-btn:disabled {
+  color: var(--muted);
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Same height as the capture button it replaces, so the list doesn't jump. */
+.action-bar {
+  flex: none;
+  min-height: 3.6rem;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+}
+
 #fix-btn {
   flex: none;
   display: flex;
@@ -139,7 +191,7 @@ button:hover:not(:disabled) {
 
 .history-list .reading {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
   gap: 1rem;
   padding: 0.75rem 1.25rem;
   font-size: 1.19rem;
@@ -151,6 +203,10 @@ button:hover:not(:disabled) {
   font-variant-numeric: tabular-nums;
 }
 
+.history-list .reading .date {
+  flex: 1;
+}
+
 .history-list .reading .time {
   font-weight: 700;
 }
@@ -158,6 +214,28 @@ button:hover:not(:disabled) {
 .history-list .reading:hover,
 .history-list .reading:active {
   background: var(--border);
+}
+
+/* Selection checkmark, iOS-style: an empty circle, filled with a check when
+   selected. Only shown in selection mode. */
+.check {
+  display: none;
+  flex: none;
+  width: 1.4rem;
+  height: 1.4rem;
+  border: 2px solid var(--muted);
+  border-radius: 50%;
+}
+
+.selecting .check {
+  display: block;
+}
+
+.reading.selected .check {
+  border-color: var(--accent);
+  background: var(--accent)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E")
+    center / 70% no-repeat;
 }
 
 .history-list:empty::after {
@@ -220,4 +298,37 @@ dd {
   text-align: right;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
+}
+
+.confirm-note {
+  margin: 0 0 1.25rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.secondary-btn {
+  color: var(--fg);
+  background: var(--border);
+}
+
+.danger-btn {
+  background: var(--danger);
+}
+
+.secondary-btn:hover:not(:disabled),
+.danger-btn:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+.secondary-btn:hover:not(:disabled) {
+  background: var(--border);
+}
+
+.danger-btn:hover:not(:disabled) {
+  background: var(--danger);
 }

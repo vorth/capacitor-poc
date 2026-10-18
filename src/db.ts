@@ -24,6 +24,7 @@ export interface ReadingsStore {
   insertReading(pos: Position): Promise<void>;
   getReadings(limit?: number, offset?: number): Promise<Reading[]>;
   getReadingCount(): Promise<number>;
+  deleteReadings(ids: number[]): Promise<void>;
 }
 
 const DB_NAME = 'readings';
@@ -115,6 +116,12 @@ class SqliteReadingsStore implements ReadingsStore {
     const res = await this.conn().query(`SELECT COUNT(*) AS n FROM readings;`);
     return ((res.values?.[0] as { n: number } | undefined)?.n) ?? 0;
   }
+
+  async deleteReadings(ids: number[]): Promise<void> {
+    if (ids.length === 0) return;
+    const placeholders = ids.map(() => '?').join(', ');
+    await this.conn().run(`DELETE FROM readings WHERE id IN (${placeholders});`, ids);
+  }
 }
 
 /**
@@ -153,6 +160,11 @@ class WebStubReadingsStore implements ReadingsStore {
 
   async getReadingCount(): Promise<number> {
     return this.rows.length;
+  }
+
+  async deleteReadings(ids: number[]): Promise<void> {
+    const doomed = new Set(ids);
+    this.rows = this.rows.filter((r) => !doomed.has(r.id));
   }
 }
 

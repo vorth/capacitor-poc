@@ -12,9 +12,22 @@ const POOR_ACCURACY_M = 50;
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
 app.innerHTML = `
+  <header class="toolbar">
+    <button id="select-btn" type="button" class="text-btn">Select</button>
+  </header>
   <main class="card">
     <ol id="history-list" class="history-list"></ol>
   </main>
+  <div id="action-bar" class="action-bar" hidden>
+    <button id="delete-btn" type="button" class="icon-btn" aria-label="Delete selected readings" disabled>
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+        <polyline points="3 6 5 6 21 6" />
+        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+        <path d="M10 11v6M14 11v6" />
+        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+      </svg>
+    </button>
+  </div>
   <button id="fix-btn" type="button" class="no-fix" aria-label="Record location fix">
     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
       <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
@@ -36,11 +49,23 @@ app.innerHTML = `
       <button type="submit" class="close-btn">Close</button>
     </form>
   </dialog>
+  <dialog id="confirm-delete" class="inspector" aria-labelledby="confirm-title">
+    <h2 id="confirm-title"></h2>
+    <p class="confirm-note">This can't be undone.</p>
+    <form method="dialog" class="dialog-actions">
+      <button type="submit" value="cancel" class="secondary-btn">Cancel</button>
+      <button type="submit" value="delete" class="danger-btn">Delete</button>
+    </form>
+  </dialog>
 `;
 
 const btn = document.querySelector<HTMLButtonElement>('#fix-btn')!;
 const historyEl = document.querySelector<HTMLOListElement>('#history-list')!;
 const inspectorEl = document.querySelector<HTMLDialogElement>('#inspector')!;
+const selectBtn = document.querySelector<HTMLButtonElement>('#select-btn')!;
+const actionBar = document.querySelector<HTMLDivElement>('#action-bar')!;
+const deleteBtn = document.querySelector<HTMLButtonElement>('#delete-btn')!;
+const confirmEl = document.querySelector<HTMLDialogElement>('#confirm-delete')!;
 
 let store: ReadingsStore | null = null;
 
@@ -67,9 +92,45 @@ function inspect(r: Reading) {
   set('inspector-time', time);
   set('lat', r.latitude.toFixed(5) + '°');
   set('lng', r.longitude.toFixed(5) + '°');
-  set('acc', `± ${r.accuracy.toFixed(1)} m`);
-  set('alt', r.altitude != null ? `${r.altitude.toFixed(1)} m` : 'n/a');
+  set('acc', `± ${r.accuracy.toFixed(0)} m`);
+  set('alt', r.altitude != null ? `${r.altitude.toFixed(0)} m` : 'n/a');
   inspectorEl.showModal();
+}
+
+// Selection mode: rows toggle selection instead of opening the inspector,
+// and the capture button is replaced by the action bar.
+let selecting = false;
+const selected = new Set<number>();
+
+function renderSelection() {
+  app.classList.toggle('selecting', selecting);
+  selectBtn.textContent = selecting ? 'Cancel' : 'Select';
+  selectBtn.disabled = !selecting && historyEl.childElementCount === 0;
+  actionBar.hidden = !selecting;
+  btn.hidden = selecting;
+  deleteBtn.disabled = selected.size === 0;
+  for (const item of historyEl.querySelectorAll<HTMLButtonElement>('.reading')) {
+    const isSelected = selected.has(Number(item.dataset.id));
+    item.classList.toggle('selected', isSelected);
+    if (selecting) item.setAttribute('aria-pressed', String(isSelected));
+    else item.removeAttribute('aria-pressed');
+  }
+}
+
+function setSelecting(on: boolean) {
+  selecting = on;
+  selected.clear();
+  renderSelection();
+}
+
+function onReadingTap(r: Reading) {
+  if (!selecting) {
+    inspect(r);
+    return;
+  }
+  if (selected.has(r.id)) selected.delete(r.id);
+  else selected.add(r.id);
+  renderSelection();
 }
 
 async function refreshHistory() {
@@ -82,24 +143,53 @@ async function refreshHistory() {
       const item = document.createElement('button');
       item.type = 'button';
       item.className = 'reading';
+      item.dataset.id = String(r.id);
+      const check = document.createElement('span');
+      check.className = 'check';
+      check.setAttribute('aria-hidden', 'true');
       const { date, time } = formatReading(r);
       const dateEl = document.createElement('span');
+      dateEl.className = 'date';
       dateEl.textContent = date;
       const timeEl = document.createElement('span');
       timeEl.className = 'time';
       timeEl.textContent = time;
-      item.append(dateEl, timeEl);
-      item.addEventListener('click', () => inspect(r));
+      item.append(check, dateEl, timeEl);
+      item.addEventListener('click', () => onReadingTap(r));
       li.append(item);
       return li;
     }),
   );
+  renderSelection();
 }
 
-// Tapping the backdrop (outside the dialog box) closes the inspector.
-inspectorEl.addEventListener('click', (e) => {
-  if (e.target === inspectorEl) inspectorEl.close();
+selectBtn.addEventListener('click', () => setSelecting(!selecting));
+
+deleteBtn.addEventListener('click', () => {
+  const n = selected.size;
+  set('confirm-title', `Delete ${n} reading${n === 1 ? '' : 's'}?`);
+  confirmEl.returnValue = '';
+  confirmEl.showModal();
 });
+
+confirmEl.addEventListener('close', async () => {
+  if (confirmEl.returnValue !== 'delete' || !store) return;
+  try {
+    await store.deleteReadings([...selected]);
+    setSelecting(false);
+    await refreshHistory();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    alert(`Readings not deleted: ${msg}`);
+  }
+});
+
+// Tapping the backdrop (outside the dialog box) closes a dialog.
+for (const dialog of [inspectorEl, confirmEl]) {
+  dialog.addEventListener('click', (e) => {
+    if (e.target === dialog) dialog.close();
+  });
+}
 
 let fixIsGood = false;
 
@@ -210,6 +300,7 @@ async function recordFix() {
 
 btn.addEventListener('click', recordFix);
 render();
+renderSelection();
 
 // Watch location only while the app is in the foreground.
 document.addEventListener('visibilitychange', () => {
