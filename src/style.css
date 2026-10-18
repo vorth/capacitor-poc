@@ -9,6 +9,10 @@
   --accent-press: #1d4ed8;
   --error: #dc2626;
   --border: #e5e7eb;
+  --fix-poor: #d97706;
+  --fix-poor-press: #b45309;
+  --fix-good: #16a34a;
+  --fix-good-press: #15803d;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -21,6 +25,10 @@
     --accent-press: #2563eb;
     --error: #f87171;
     --border: #2a2e3a;
+    --fix-poor: #d97706;
+    --fix-poor-press: #b45309;
+    --fix-good: #16a34a;
+    --fix-good-press: #15803d;
   }
 }
 
@@ -81,6 +89,45 @@ button:hover:not(:disabled) {
 button:disabled {
   opacity: 0.6;
   cursor: progress;
+}
+
+#fix-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+#fix-btn.no-fix {
+  background: var(--fix-poor);
+}
+
+#fix-btn.no-fix:hover,
+#fix-btn.no-fix:active {
+  background: var(--fix-poor-press);
+}
+
+#fix-btn.good-fix {
+  background: var(--fix-good);
+}
+
+#fix-btn.good-fix:hover,
+#fix-btn.good-fix:active {
+  background: var(--fix-good-press);
+}
+
+.icon {
+  width: 1.6rem;
+  height: 1.6rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.icon-filled {
+  fill: currentColor;
 }
 
 .status {
