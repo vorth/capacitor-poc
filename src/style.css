@@ -203,12 +203,18 @@ button:hover:not(:disabled) {
   font-variant-numeric: tabular-nums;
 }
 
-.history-list .reading .date {
-  flex: 1;
+.history-list .reading .code {
+  flex: none;
+  font-weight: 700;
 }
 
-.history-list .reading .time {
-  font-weight: 700;
+.history-list .reading .taxon {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .history-list .reading:hover,
@@ -266,9 +272,19 @@ button:hover:not(:disabled) {
   font-weight: 400;
 }
 
-.inspector h2 .time {
-  margin-left: 25px;
+.inspector h2 .code {
   font-weight: 700;
+}
+
+#details-title .code {
+  margin-left: 25px;
+}
+
+/* Code on the left, taxon on the right. */
+.split-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
 }
 
 .result {
@@ -298,6 +314,39 @@ dd {
   text-align: right;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
+}
+
+/* Sit near the top so the on-screen keyboard doesn't cover the fields. */
+.details {
+  margin-top: calc(env(safe-area-inset-top) + 2rem);
+}
+
+.details-form label {
+  display: grid;
+  gap: 0.3rem;
+  margin-bottom: 1rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* 16px or larger, or iOS zooms the page when the field is focused. */
+.details-form input {
+  padding: 0.6rem 0.7rem;
+  font: inherit;
+  font-size: 1rem;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+.details-form input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.details-form .dialog-actions {
+  margin-top: 1.5rem;
 }
 
 .confirm-note {

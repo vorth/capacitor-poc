@@ -16,12 +16,21 @@ export interface Reading {
   altitude: number | null;
   /** Epoch milliseconds, from Position.timestamp. */
   recordedAt: number;
+  /** The ID scanned from the QR code at this location; at most MAX_CODE_LENGTH characters. */
+  code: string;
+  /** Free text entered by the user; null when left blank. */
+  locality: string | null;
+  /** Free text entered by the user; null when left blank. */
+  taxon: string | null;
 }
+
+/** The user-supplied fields of a reading, saved alongside its location fix. */
+export type ReadingDetails = Pick<Reading, 'code' | 'locality' | 'taxon'>;
 
 /** The persistence surface the app depends on. Backed by SQLite natively, stubbed on web. */
 export interface ReadingsStore {
   init(): Promise<void>;
-  insertReading(pos: Position): Promise<void>;
+  insertReading(pos: Position, details: ReadingDetails): Promise<void>;
   getReadings(limit?: number, offset?: number): Promise<Reading[]>;
   getReadingCount(): Promise<number>;
   deleteReadings(ids: number[]): Promise<void>;
@@ -30,8 +39,13 @@ export interface ReadingsStore {
 const DB_NAME = 'readings';
 const DB_VERSION = 1;
 
-// Versioned schema. Add future migrations as new { toVersion, statements } entries
-// and bump DB_VERSION — never edit an existing entry.
+/** Longest ID we accept from a scanned QR code. */
+export const MAX_CODE_LENGTH = 25;
+
+// Versioned schema. Until the first release, edit version 1 in place (and
+// reinstall the app to recreate the database). After that, add migrations as
+// new { toVersion, statements } entries and bump DB_VERSION — never edit an
+// existing entry.
 const UPGRADE_STATEMENTS = [
   {
     toVersion: 1,
@@ -42,7 +56,10 @@ const UPGRADE_STATEMENTS = [
         longitude   REAL    NOT NULL,
         accuracy    REAL    NOT NULL,
         altitude    REAL,
-        recorded_at INTEGER NOT NULL
+        recorded_at INTEGER NOT NULL,
+        code        TEXT    NOT NULL CHECK (length(code) <= ${MAX_CODE_LENGTH}),
+        locality    TEXT,
+        taxon       TEXT
       );`,
       `CREATE INDEX IF NOT EXISTS idx_readings_recorded_at
          ON readings(recorded_at);`,
@@ -57,6 +74,9 @@ interface ReadingRow {
   accuracy: number;
   altitude: number | null;
   recorded_at: number;
+  code: string;
+  locality: string | null;
+  taxon: string | null;
 }
 
 function rowToReading(r: ReadingRow): Reading {
@@ -67,6 +87,9 @@ function rowToReading(r: ReadingRow): Reading {
     accuracy: r.accuracy,
     altitude: r.altitude,
     recordedAt: r.recorded_at,
+    code: r.code,
+    locality: r.locality,
+    taxon: r.taxon,
   };
 }
 
@@ -92,18 +115,28 @@ class SqliteReadingsStore implements ReadingsStore {
     return this.db;
   }
 
-  async insertReading(pos: Position): Promise<void> {
+  async insertReading(pos: Position, details: ReadingDetails): Promise<void> {
     const c = pos.coords;
     await this.conn().run(
-      `INSERT INTO readings (latitude, longitude, accuracy, altitude, recorded_at)
-       VALUES (?, ?, ?, ?, ?);`,
-      [c.latitude, c.longitude, c.accuracy, c.altitude ?? null, pos.timestamp],
+      `INSERT INTO readings
+         (latitude, longitude, accuracy, altitude, recorded_at, code, locality, taxon)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
+      [
+        c.latitude,
+        c.longitude,
+        c.accuracy,
+        c.altitude ?? null,
+        pos.timestamp,
+        details.code,
+        details.locality,
+        details.taxon,
+      ],
     );
   }
 
   async getReadings(limit = 10, offset = 0): Promise<Reading[]> {
     const res = await this.conn().query(
-      `SELECT id, latitude, longitude, accuracy, altitude, recorded_at
+      `SELECT id, latitude, longitude, accuracy, altitude, recorded_at, code, locality, taxon
          FROM readings
          ORDER BY recorded_at DESC
          LIMIT ? OFFSET ?;`,
@@ -140,7 +173,7 @@ class WebStubReadingsStore implements ReadingsStore {
     );
   }
 
-  async insertReading(pos: Position): Promise<void> {
+  async insertReading(pos: Position, details: ReadingDetails): Promise<void> {
     const c = pos.coords;
     this.rows.push({
       id: this.nextId++,
@@ -149,6 +182,7 @@ class WebStubReadingsStore implements ReadingsStore {
       accuracy: c.accuracy,
       altitude: c.altitude ?? null,
       recordedAt: pos.timestamp,
+      ...details,
     });
   }
 

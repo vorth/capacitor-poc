@@ -1,13 +1,26 @@
 import './style.css';
 import { Geolocation, type Position } from '@capacitor/geolocation';
 import { Capacitor } from '@capacitor/core';
-import { getStore, type Reading, type ReadingsStore } from './db';
+import {
+  CapacitorBarcodeScanner,
+  CapacitorBarcodeScannerTypeHint,
+} from '@capacitor/barcode-scanner';
+import {
+  getStore,
+  MAX_CODE_LENGTH,
+  type Reading,
+  type ReadingDetails,
+  type ReadingsStore,
+} from './db';
 
 const STALE_FIX_MS = 3000;
 // Hysteresis: turn green at GOOD_ACCURACY_M or better, but only drop back to
 // amber once accuracy is worse than POOR_ACCURACY_M.
 const GOOD_ACCURACY_M = 40;
 const POOR_ACCURACY_M = 50;
+
+// Error code the barcode scanner rejects with when the user cancels.
+const SCAN_CANCELLED = 'OS-PLUG-BARC-0006';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
@@ -28,18 +41,25 @@ app.innerHTML = `
       </svg>
     </button>
   </div>
-  <button id="fix-btn" type="button" class="no-fix" aria-label="Record location fix">
+  <button id="fix-btn" type="button" class="no-fix" aria-label="Scan QR code and record location fix">
     <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-      <circle cx="12" cy="13" r="4" />
+      <rect x="3" y="3" width="5" height="5" rx="1" />
+      <rect x="16" y="3" width="5" height="5" rx="1" />
+      <rect x="3" y="16" width="5" height="5" rx="1" />
+      <path d="M21 16h-3a2 2 0 0 0-2 2v3" />
+      <path d="M12 7v3a2 2 0 0 1-2 2H7" />
+      <path d="M21 21v.01M3 12h.01M12 3h.01M12 16v.01M16 12h1M21 12v.01M12 21v-1" />
     </svg>
     <svg class="icon icon-filled" viewBox="0 0 24 24" aria-hidden="true">
       <polygon points="3 11 22 2 13 21 11 13 3 11" />
     </svg>
   </button>
   <dialog id="inspector" class="inspector" aria-labelledby="inspector-title">
-    <h2 id="inspector-title"><span id="inspector-date"></span><span id="inspector-time" class="time"></span></h2>
+    <h2 id="inspector-title" class="split-title"><span id="inspector-code" class="code"></span><span id="inspector-taxon"></span></h2>
     <dl class="result">
+      <div><dt>Time</dt><dd id="time-value">—</dd></div>
+      <div><dt>Date</dt><dd id="date-value">—</dd></div>
+      <div><dt>Locality</dt><dd id="locality-value">—</dd></div>
       <div><dt>Latitude</dt><dd id="lat">—</dd></div>
       <div><dt>Longitude</dt><dd id="lng">—</dd></div>
       <div><dt>Accuracy</dt><dd id="acc">—</dd></div>
@@ -47,6 +67,24 @@ app.innerHTML = `
     </dl>
     <form method="dialog">
       <button type="submit" class="close-btn">Close</button>
+    </form>
+  </dialog>
+  <dialog id="details" class="inspector details" aria-labelledby="details-title">
+    <h2 id="details-title">ID<span id="details-code" class="code"></span></h2>
+    <form method="dialog" class="details-form">
+      <label>
+        Locality
+        <input id="locality" type="text" autocapitalize="sentences" enterkeyhint="next" />
+      </label>
+      <label>
+        Taxon
+        <input id="taxon" type="text" autocapitalize="sentences" autocorrect="off"
+          spellcheck="false" enterkeyhint="done" />
+      </label>
+      <div class="dialog-actions">
+        <button type="submit" value="discard" class="secondary-btn">Discard</button>
+        <button type="submit" value="save">Save</button>
+      </div>
     </form>
   </dialog>
   <dialog id="confirm-delete" class="inspector" aria-labelledby="confirm-title">
@@ -66,6 +104,9 @@ const selectBtn = document.querySelector<HTMLButtonElement>('#select-btn')!;
 const actionBar = document.querySelector<HTMLDivElement>('#action-bar')!;
 const deleteBtn = document.querySelector<HTMLButtonElement>('#delete-btn')!;
 const confirmEl = document.querySelector<HTMLDialogElement>('#confirm-delete')!;
+const detailsEl = document.querySelector<HTMLDialogElement>('#details')!;
+const localityInput = document.querySelector<HTMLInputElement>('#locality')!;
+const taxonInput = document.querySelector<HTMLInputElement>('#taxon')!;
 
 let store: ReadingsStore | null = null;
 
@@ -88,8 +129,11 @@ function formatReading(r: Reading): { date: string; time: string } {
 
 function inspect(r: Reading) {
   const { date, time } = formatReading(r);
-  set('inspector-date', date);
-  set('inspector-time', time);
+  set('inspector-code', r.code);
+  set('inspector-taxon', r.taxon ?? '');
+  set('time-value', time);
+  set('date-value', date);
+  set('locality-value', r.locality ?? '—');
   set('lat', r.latitude.toFixed(5) + '°');
   set('lng', r.longitude.toFixed(5) + '°');
   set('acc', `± ${r.accuracy.toFixed(0)} m`);
@@ -147,14 +191,13 @@ async function refreshHistory() {
       const check = document.createElement('span');
       check.className = 'check';
       check.setAttribute('aria-hidden', 'true');
-      const { date, time } = formatReading(r);
-      const dateEl = document.createElement('span');
-      dateEl.className = 'date';
-      dateEl.textContent = date;
-      const timeEl = document.createElement('span');
-      timeEl.className = 'time';
-      timeEl.textContent = time;
-      item.append(check, dateEl, timeEl);
+      const codeEl = document.createElement('span');
+      codeEl.className = 'code';
+      codeEl.textContent = r.code;
+      const taxonEl = document.createElement('span');
+      taxonEl.className = 'taxon';
+      taxonEl.textContent = r.taxon ?? '';
+      item.append(check, codeEl, taxonEl);
       item.addEventListener('click', () => onReadingTap(r));
       li.append(item);
       return li;
@@ -284,12 +327,80 @@ function stopWatching() {
   render();
 }
 
+// Scan a QR code with the native live scanner. Resolves to null if the user cancels.
+async function scanQrCode(): Promise<string | null> {
+  try {
+    const result = await CapacitorBarcodeScanner.scanBarcode({
+      hint: CapacitorBarcodeScannerTypeHint.QR_CODE,
+      scanInstructions: 'Point the camera at the QR code',
+    });
+    return result.ScanResult;
+  } catch (err) {
+    if ((err as { code?: string }).code === SCAN_CANCELLED) return null;
+    throw err;
+  }
+}
+
+// Ask for the optional locality and taxon. Resolves to null if the user discards the reading.
+function askDetails(code: string): Promise<ReadingDetails | null> {
+  set('details-code', code);
+  localityInput.value = '';
+  taxonInput.value = '';
+  detailsEl.returnValue = '';
+  detailsEl.showModal();
+  return new Promise((resolve) => {
+    detailsEl.addEventListener(
+      'close',
+      () => {
+        if (detailsEl.returnValue !== 'save') {
+          resolve(null);
+          return;
+        }
+        const text = (input: HTMLInputElement) => input.value.trim() || null;
+        resolve({ code, locality: text(localityInput), taxon: text(taxonInput) });
+      },
+      { once: true },
+    );
+  });
+}
+
+// The keyboard's return key would submit the form with its first button
+// (Discard), so make it move to the next field or dismiss the keyboard instead.
+detailsEl.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || !(e.target instanceof HTMLInputElement)) return;
+  e.preventDefault();
+  if (e.target === localityInput) taxonInput.focus();
+  else e.target.blur();
+});
+
+let scanning = false;
+
 async function recordFix() {
+  // Keep the fix from when the user tapped: on Android the scanner covers the
+  // app, which stops the location watch until we're back in the foreground.
   const pos = currentFix;
-  if (!pos) return;
+  if (!pos || scanning) return;
+  scanning = true;
+  let code: string | null;
+  try {
+    code = await scanQrCode();
+  } catch (scanErr) {
+    const msg = scanErr instanceof Error ? scanErr.message : String(scanErr);
+    alert(`Scan failed: ${msg}`);
+    return;
+  } finally {
+    scanning = false;
+  }
+  if (code == null) return;
+  if (code.length > MAX_CODE_LENGTH) {
+    alert(`Not a valid ID: QR code is longer than ${MAX_CODE_LENGTH} characters.`);
+    return;
+  }
+  const details = await askDetails(code);
+  if (!details) return;
   try {
     if (!store) throw new Error('storage unavailable');
-    await store.insertReading(pos);
+    await store.insertReading(pos, details);
     await refreshHistory();
     historyEl.parentElement!.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (saveErr) {

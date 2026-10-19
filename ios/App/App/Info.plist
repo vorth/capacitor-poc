@@ -24,6 +24,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>This app uses the camera to scan the QR code at each location.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>This app uses your location to show your current position and its accuracy.</string>
 	<key>UIApplicationSceneManifest</key>
