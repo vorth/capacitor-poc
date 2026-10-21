@@ -2,7 +2,7 @@
 
 A Capacitor app (Vanilla TS + Vite) for recording spots in the field. At each
 spot you scan the short QR code ID tag placed there; the app saves that ID
-with the current GPS fix and an optional locality and taxon, in a local SQLite
+with the current GPS fix and an optional two-line locality, taxon and collector, in a local SQLite
 database.
 
 ## Stack
@@ -15,6 +15,9 @@ database.
   (native live scanner on device, webcam via `html5-qrcode` on web)
 - **Persistence:** [`@capacitor-community/sqlite`](https://github.com/capacitor-community/sqlite)
   (native SQLite on iOS/Android; in-memory stub on web — see [Persistence](#persistence))
+- **Printing:** a small plugin inside the app (`PrinterPlugin` in `ios/App/App/`
+  and the Android `org.vorthmann.checkrspot` package) that opens the system
+  print dialog for the web view; `window.print()` on web
 
 ## Using the app
 
@@ -22,12 +25,16 @@ database.
   accuracy is good (40 m or better) and **amber** when it is poor or there is
   no fix. You can still record with a poor fix.
 - Tap it to open the QR scanner. Once a code is read, enter an optional
-  **Locality** and **Taxon** (keyboard dictation works), then **Save**, or
+  **Locality** (two lines), **Taxon** and **Collector** (keyboard dictation works), then **Save**, or
   **Discard** to drop the reading. The location saved is the one from when you
-  tapped the button.
+  tapped the button. Both locality lines and Collector start out filled in
+  with the values from the last reading you saved.
 - The list shows each reading's ID and taxon, newest first. Tap one to see its
-  time, date, locality, coordinates, accuracy and altitude.
-- **Select** lets you pick readings and delete them.
+  time, date, locality, coordinates, accuracy, altitude and collector.
+- **Select** lets you pick readings and delete them, or tap **Labels** to
+  preview specimen labels for them (oldest first, shown at twice actual size)
+  and **Print** them. Each label has a locality block (both locality lines, coordinates
+  ± accuracy, date and time, elevation, collector), the taxon if there is one, and the ID in large type.
 
 ## Prerequisites
 
@@ -79,7 +86,7 @@ the first time you scan.
 
 Each reading is saved to a `readings` table: latitude, longitude, accuracy,
 altitude, recorded-at timestamp, `code` (the scanned ID, at most 25
-characters), `locality` and `taxon`. See `src/db.ts` for the schema and
+characters), `locality`, `locality2`, `taxon` and `collector`. See `src/db.ts` for the schema and
 `ReadingsStore` interface.
 
 - **Native (iOS/Android):** backed by real SQLite via
@@ -98,7 +105,8 @@ A failed save is reported in an alert rather than crashing the app.
 
 - `src/main.ts` — UI, location watching, scanning and the capture flow
 - `src/db.ts` — `ReadingsStore` (SQLite on native, in-memory stub on web) and schema
-- `src/style.css` — styles (light/dark aware)
+- `src/printer.ts` — JS side of the app's own `Printer` plugin
+- `src/style.css` — styles (light/dark aware), including the label and print styles
 - `capacitor.config.ts` — Capacitor config (appId, webDir)
 - `ios/`, `android/` — native platform projects
 - `CLAUDE.md` — notes for Claude Code sessions

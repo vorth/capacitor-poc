@@ -136,7 +136,7 @@ button:hover:not(:disabled) {
   flex: none;
   min-height: 3.6rem;
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   align-items: center;
 }
 
@@ -382,4 +382,206 @@ dd {
 
 .danger-btn:hover:not(:disabled) {
   background: var(--danger);
+}
+
+/* Labels sheet: full-screen, slides up from the bottom like an iOS modal. */
+.sheet {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  color: var(--fg);
+  background: var(--bg);
+  border: none;
+  animation: sheet-in 0.3s ease-out;
+}
+
+.sheet[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.sheet.closing {
+  animation: sheet-out 0.25s ease-in forwards;
+}
+
+.sheet::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+@keyframes sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes sheet-out {
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet,
+  .sheet.closing {
+    animation: none;
+  }
+}
+
+.sheet-bar {
+  flex: none;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding: max(0.75rem, env(safe-area-inset-top)) 0.5rem 0.75rem;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+
+.sheet-bar h2 {
+  margin: 0;
+  font-size: 1.06rem;
+  font-weight: 600;
+}
+
+.sheet-bar .text-btn:first-child {
+  justify-self: start;
+}
+
+.sheet-bar .text-btn:last-child {
+  justify-self: end;
+  font-weight: 600;
+}
+
+.sheet-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 1rem 1rem max(1rem, env(safe-area-inset-bottom));
+}
+
+.sheet-note {
+  margin: 0 0 0.75rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+/* White "paper" in both themes, so the preview looks like the printout. */
+.label-paper {
+  padding: 0.5rem;
+  background: #fff;
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+}
+
+.label-paper .label-output {
+  zoom: 2;
+}
+
+/* Specimen labels, from the old CheckrSpot app's label page. Sizes are
+   physical: each label is 60px (5/8 in) wide, with 3pt text. */
+.label-output {
+  align-items: flex-start;
+  color: #18181b;
+  display: flex;
+  flex-flow: row wrap;
+  justify-content: flex-start;
+}
+
+.label-output .single-label {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+
+.label-output .label-locality,
+.label-output .label-notes,
+.label-output .label-taxonomy {
+  border: 1.5px solid #18181b;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  margin: 0.5px;
+  padding: 0.48px 0.72px;
+  width: 60px;
+}
+
+.label-output .label-locality {
+  align-items: flex-start;
+}
+
+.label-output .label-notes,
+.label-output .label-taxonomy {
+  align-items: center;
+}
+
+.label-output .label-locality span,
+.label-output .label-notes span {
+  font-family: Geneva, sans-serif;
+  font-size: 3pt;
+  letter-spacing: -0.05px;
+  line-height: 1.6;
+  width: 100%;
+}
+
+.label-output .label-notes span,
+.label-output .label-taxonomy span {
+  text-align: center;
+}
+
+.label-output .label-time {
+  margin-left: 5px;
+}
+
+.label-output .label-id {
+  font-size: 11pt;
+}
+
+.print-only {
+  display: none;
+}
+
+/* Print only the labels: hide the app, including the open labels sheet. */
+@media print {
+  :root {
+    color-scheme: light;
+  }
+
+  html,
+  body {
+    height: auto;
+    background: #fff;
+  }
+
+  #app,
+  dialog {
+    display: none !important;
+  }
+
+  .label-output.print-only {
+    display: block;
+    overflow-wrap: normal;
+    margin: 0;
+  }
+
+  .label-output .single-label {
+    break-after: avoid;
+    break-before: avoid;
+    break-inside: avoid;
+    display: inline-block;
+    margin: 0;
+  }
+
+  .label-output .label-locality,
+  .label-output .label-notes,
+  .label-output .label-taxonomy {
+    margin: 1px 0.5px;
+  }
 }

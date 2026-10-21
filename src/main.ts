@@ -13,6 +13,7 @@ import {
   type ReadingDetails,
   type ReadingsStore,
 } from './db';
+import { Printer } from './printer';
 
 const STALE_FIX_MS = 3000;
 // Hysteresis: turn green at GOOD_ACCURACY_M or better, but only drop back to
@@ -33,6 +34,7 @@ app.innerHTML = `
     <ol id="history-list" class="history-list"></ol>
   </main>
   <div id="action-bar" class="action-bar" hidden>
+    <button id="labels-btn" type="button" class="text-btn" disabled>Labels</button>
     <button id="delete-btn" type="button" class="icon-btn" aria-label="Delete selected readings" disabled>
       <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
         <polyline points="3 6 5 6 21 6" />
@@ -65,6 +67,7 @@ app.innerHTML = `
       <div><dt>Longitude</dt><dd id="lng">—</dd></div>
       <div><dt>Accuracy</dt><dd id="acc">—</dd></div>
       <div><dt>Altitude</dt><dd id="alt">—</dd></div>
+      <div><dt>Collector</dt><dd id="collector-value">—</dd></div>
     </dl>
     <form method="dialog">
       <button type="submit" class="close-btn">Close</button>
@@ -76,10 +79,17 @@ app.innerHTML = `
       <label>
         Locality
         <input id="locality" type="text" autocapitalize="sentences" enterkeyhint="next" />
+        <input id="locality2" type="text" autocapitalize="sentences" enterkeyhint="next"
+          aria-label="Locality, second line" />
       </label>
       <label>
         Taxon
         <input id="taxon" type="text" autocapitalize="sentences" autocorrect="off"
+          spellcheck="false" enterkeyhint="next" />
+      </label>
+      <label>
+        Collector
+        <input id="collector" type="text" autocapitalize="words" autocorrect="off"
           spellcheck="false" enterkeyhint="done" />
       </label>
       <div class="dialog-actions">
@@ -87,6 +97,19 @@ app.innerHTML = `
         <button type="submit" value="save">Save</button>
       </div>
     </form>
+  </dialog>
+  <dialog id="labels" class="sheet" aria-labelledby="labels-title">
+    <header class="sheet-bar">
+      <button id="labels-done" type="button" class="text-btn">Done</button>
+      <h2 id="labels-title">Labels</h2>
+      <button id="labels-print" type="button" class="text-btn">Print</button>
+    </header>
+    <div class="sheet-body">
+      <p class="sheet-note">Shown at twice actual size.</p>
+      <div class="label-paper">
+        <div id="label-preview" class="label-output"></div>
+      </div>
+    </div>
   </dialog>
   <dialog id="confirm-delete" class="inspector" aria-labelledby="confirm-title">
     <h2 id="confirm-title"></h2>
@@ -107,9 +130,25 @@ const deleteBtn = document.querySelector<HTMLButtonElement>('#delete-btn')!;
 const confirmEl = document.querySelector<HTMLDialogElement>('#confirm-delete')!;
 const detailsEl = document.querySelector<HTMLDialogElement>('#details')!;
 const localityInput = document.querySelector<HTMLInputElement>('#locality')!;
+const locality2Input = document.querySelector<HTMLInputElement>('#locality2')!;
 const taxonInput = document.querySelector<HTMLInputElement>('#taxon')!;
+const collectorInput = document.querySelector<HTMLInputElement>('#collector')!;
+const labelsBtn = document.querySelector<HTMLButtonElement>('#labels-btn')!;
+const labelsEl = document.querySelector<HTMLDialogElement>('#labels')!;
+const labelsDoneBtn = document.querySelector<HTMLButtonElement>('#labels-done')!;
+const labelsPrintBtn = document.querySelector<HTMLButtonElement>('#labels-print')!;
+const labelPreview = document.querySelector<HTMLDivElement>('#label-preview')!;
+
+// What gets printed: a copy of the labels outside #app, shown only by the
+// print stylesheet (which hides #app, and with it the open labels sheet).
+const labelPrintEl = document.createElement('div');
+labelPrintEl.className = 'label-output print-only';
+document.body.append(labelPrintEl);
 
 let store: ReadingsStore | null = null;
+
+// All readings, as last loaded into the list.
+let readings: Reading[] = [];
 
 // Most recent position from the location watch; null when we have no usable fix.
 let currentFix: Position | null = null;
@@ -134,7 +173,16 @@ function inspect(r: Reading) {
   set('inspector-taxon', r.taxon ?? '');
   set('time-value', time);
   set('date-value', date);
-  set('locality-value', r.locality ?? '—');
+  // Both locality lines in one cell, one per line.
+  const localityLines = [r.locality, r.locality2].filter((line) => line != null);
+  const localityEl = document.querySelector<HTMLElement>('#locality-value')!;
+  localityEl.replaceChildren();
+  localityLines.forEach((line, i) => {
+    if (i > 0) localityEl.append(document.createElement('br'));
+    localityEl.append(line);
+  });
+  if (localityLines.length === 0) localityEl.textContent = '—';
+  set('collector-value', r.collector ?? '—');
   set('lat', r.latitude.toFixed(5) + '°');
   set('lng', r.longitude.toFixed(5) + '°');
   set('acc', `± ${r.accuracy.toFixed(0)} m`);
@@ -154,6 +202,7 @@ function renderSelection() {
   actionBar.hidden = !selecting;
   btn.hidden = selecting;
   deleteBtn.disabled = selected.size === 0;
+  labelsBtn.disabled = selected.size === 0;
   for (const item of historyEl.querySelectorAll<HTMLButtonElement>('.reading')) {
     const isSelected = selected.has(Number(item.dataset.id));
     item.classList.toggle('selected', isSelected);
@@ -181,7 +230,7 @@ function onReadingTap(r: Reading) {
 async function refreshHistory() {
   if (!store) return;
   const count = await store.getReadingCount();
-  const readings = await store.getReadings(count);
+  readings = await store.getReadings(count);
   historyEl.replaceChildren(
     ...readings.map((r) => {
       const li = document.createElement('li');
@@ -225,6 +274,80 @@ confirmEl.addEventListener('close', async () => {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     alert(`Readings not deleted: ${msg}`);
+  }
+});
+
+// One specimen label per reading, styled after the old app's labels: a
+// locality block (ending with the collector), the taxon (if any), and the ID
+// in large type.
+function labelFor(r: Reading): HTMLElement {
+  const { date, time } = formatReading(r);
+  const span = (text: string, className?: string) => {
+    const el = document.createElement('span');
+    el.textContent = text;
+    if (className) el.className = className;
+    return el;
+  };
+  const block = (className: string, lines: HTMLElement[]) => {
+    const div = document.createElement('div');
+    div.className = className;
+    div.append(...lines);
+    return div;
+  };
+  const label = document.createElement('div');
+  label.className = 'single-label';
+  // The time follows the date on the same row, set off by a fixed gap.
+  const dateTime = span(date);
+  dateTime.append(span(time, 'label-time'));
+  const locality = [
+    r.locality ? span(r.locality) : null,
+    r.locality2 ? span(r.locality2) : null,
+    span(`${r.latitude.toFixed(5)}, ${r.longitude.toFixed(5)} ±${r.accuracy.toFixed(0)}m`),
+    dateTime,
+    r.altitude != null ? span(`elev. ${r.altitude.toFixed(0)}m`) : null,
+    r.collector ? span(r.collector) : null,
+  ];
+  label.append(block('label-locality', locality.filter((el) => el != null)));
+  if (r.taxon) label.append(block('label-notes', [span(r.taxon)]));
+  label.append(block('label-taxonomy', [span(r.code, 'label-id')]));
+  return label;
+}
+
+// Labels for the selected readings, oldest first.
+function renderLabels() {
+  const chosen = readings
+    .filter((r) => selected.has(r.id))
+    .sort((a, b) => a.recordedAt - b.recordedAt);
+  labelPreview.replaceChildren(...chosen.map(labelFor));
+  labelPrintEl.replaceChildren(...chosen.map(labelFor));
+}
+
+labelsBtn.addEventListener('click', () => {
+  renderLabels();
+  labelsEl.querySelector('.sheet-body')!.scrollTop = 0;
+  labelsEl.showModal();
+});
+
+// Slide the sheet out, then close it.
+labelsDoneBtn.addEventListener('click', () => {
+  labelsEl.classList.add('closing');
+  const done = () => {
+    labelsEl.classList.remove('closing');
+    labelsEl.close();
+  };
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) done();
+  else labelsEl.addEventListener('animationend', done, { once: true });
+});
+
+labelsPrintBtn.addEventListener('click', async () => {
+  labelsPrintBtn.disabled = true;
+  try {
+    await Printer.printWebView({ jobName: 'Specimen Labels' });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    alert(`Labels not printed: ${msg}`);
+  } finally {
+    labelsPrintBtn.disabled = false;
   }
 });
 
@@ -342,11 +465,39 @@ async function scanQrCode(): Promise<string | null> {
   }
 }
 
-// Ask for the optional locality and taxon. Resolves to null if the user discards the reading.
+// Defaults for the next reading, taken from the last saved one: the two
+// locality lines (always saved together, since they describe one place) and
+// the collector. Kept in localStorage: losing them (the OS may clear web
+// storage) only means retyping them.
+const LAST_DETAILS_KEY = 'lastDetails';
+
+type RememberedDetails = Pick<ReadingDetails, 'locality' | 'locality2' | 'collector'>;
+
+function loadLastDetails(): Partial<RememberedDetails> {
+  try {
+    return JSON.parse(localStorage.getItem(LAST_DETAILS_KEY) ?? '{}');
+  } catch {
+    return {};
+  }
+}
+
+function saveLastDetails({ locality, locality2, collector }: RememberedDetails) {
+  try {
+    localStorage.setItem(LAST_DETAILS_KEY, JSON.stringify({ locality, locality2, collector }));
+  } catch {
+    // Not worth bothering the user about.
+  }
+}
+
+// Ask for the optional locality (two lines), taxon and collector. Resolves to null if the
+// user discards the reading.
 function askDetails(code: string): Promise<ReadingDetails | null> {
   set('details-code', code);
-  localityInput.value = '';
+  const last = loadLastDetails();
+  localityInput.value = last.locality ?? '';
+  locality2Input.value = last.locality2 ?? '';
   taxonInput.value = '';
+  collectorInput.value = last.collector ?? '';
   detailsEl.returnValue = '';
   detailsEl.showModal();
   return new Promise((resolve) => {
@@ -358,7 +509,15 @@ function askDetails(code: string): Promise<ReadingDetails | null> {
           return;
         }
         const text = (input: HTMLInputElement) => input.value.trim() || null;
-        resolve({ code, locality: text(localityInput), taxon: text(taxonInput) });
+        const details = {
+          code,
+          locality: text(localityInput),
+          locality2: text(locality2Input),
+          taxon: text(taxonInput),
+          collector: text(collectorInput),
+        };
+        saveLastDetails(details);
+        resolve(details);
       },
       { once: true },
     );
@@ -370,7 +529,9 @@ function askDetails(code: string): Promise<ReadingDetails | null> {
 detailsEl.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' || !(e.target instanceof HTMLInputElement)) return;
   e.preventDefault();
-  if (e.target === localityInput) taxonInput.focus();
+  if (e.target === localityInput) locality2Input.focus();
+  else if (e.target === locality2Input) taxonInput.focus();
+  else if (e.target === taxonInput) collectorInput.focus();
   else e.target.blur();
 });
 

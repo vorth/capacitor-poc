@@ -2,7 +2,7 @@
 
 Field data-collection app (Capacitor 8, iOS + Android). At each spot the
 user scans a short QR code ID tag, and the app saves it with a GPS fix and
-optional free-text **locality** and **taxon**. Readings are stored locally in
+optional free-text **locality** (two lines), **taxon** and **collector**. Readings are stored locally in
 SQLite; photos are not taken or stored. Pre-release proof of concept with no
 users yet.
 
@@ -45,8 +45,16 @@ dependencies change.
   components or state library.
 - `src/db.ts` — `Reading` type, `ReadingsStore` interface, schema, and two
   implementations: SQLite on native, in-memory stub on web (`npm run dev`).
+- `src/printer.ts` — `Printer` plugin wrapper (`printWebView`); falls back to
+  `window.print()` on web.
 - `src/style.css` — light/dark themes via CSS variables on `:root`; iOS-like
-  look.
+  look. Also the label styles (ported from the old app's
+  `CheckrSpot/Resources/styles.css`) and the `@media print` rules.
+- `ios/App/App/PrinterPlugin.swift` — the app's own `Printer` plugin plus
+  `AppViewController` (a `CAPBridgeViewController` subclass that registers
+  it; `SceneDelegate` uses it as the root view controller).
+- `android/app/src/main/java/org/vorthmann/checkrspot/PrinterPlugin.java` —
+  Android `Printer` plugin, registered in `MainActivity`.
 - `ios/App/App/Info.plist` — camera and location usage strings.
 - `android/variables.gradle` — `minSdkVersion = 26` (required by the scanner).
 
@@ -55,9 +63,9 @@ dependencies change.
 Table `readings` (`src/db.ts`): `id` (autoincrement row id), `latitude`,
 `longitude`, `accuracy` (m), `altitude` (m, nullable), `recorded_at` (epoch
 ms, from the fix's timestamp), `code` (text, NOT NULL, CHECK length ≤
-`MAX_CODE_LENGTH` = 25), `locality` and `taxon` (text, null when blank).
-TS fields are camelCase (`recordedAt`); `ReadingDetails` = code + locality +
-taxon.
+`MAX_CODE_LENGTH` = 25), `locality`, `locality2`, `taxon` and `collector`
+(text, null when blank). `locality2` is the locality's second line. TS fields are camelCase (`recordedAt`); `ReadingDetails` = code +
+locality + locality2 + taxon + collector.
 
 - `id` is the row id. The scanned value is **`code`** (the user rejected
   reusing `id` for it). The UI labels the code "ID".
@@ -80,24 +88,38 @@ taxon.
 - **Capture flow** (`recordFix`): snapshot the current fix at tap time (on
   Android the scanner covers the app, which stops the watch) → native live
   scanner restricted to QR codes → reject codes over 25 characters → details
-  dialog with optional Locality / Taxon → insert → refresh list.
+  dialog with optional Locality / Taxon / Collector → insert → refresh list.
   - Cancelling the scanner rejects with code `OS-PLUG-BARC-0006`, treated as
     a silent cancel. This was taken from the plugin's iOS source; not yet
     confirmed on Android.
-  - Details dialog: Discard drops the whole reading. Return in Locality moves
-    to Taxon, and in Taxon dismisses the keyboard (otherwise it would submit
-    the form via its first button, Discard). No backdrop-tap close, so typed
+  - Details dialog: Discard drops the whole reading. The second locality
+    input sits under the first, inside the same Locality label, with no label
+    of its own. Return in the locality lines and Taxon moves to the next field, and in Collector dismisses the keyboard
+    (otherwise it would submit the form via its first button, Discard).
+    Both locality lines and Collector are prefilled from the last saved
+    reading, kept as one JSON object in `localStorage` (`lastDetails`;
+    written only on Save, blanks included). The locality lines are stored
+    as a pair because they correlate. No backdrop-tap close, so typed
     text isn't lost. Taxon has autocorrect/spellcheck off (Latin names).
     Inputs are ≥ 16px to avoid iOS focus zoom. The dialog sits near the top so
     the keyboard doesn't cover it. Native keyboard dictation works with no
     extra permission.
 - **List**: all readings, newest first. Each row shows code (bold, left) and
   taxon (right, ellipsized). Tap opens the inspector dialog: title is code +
-  taxon; rows are Time, Date, Locality, Latitude, Longitude, Accuracy,
-  Altitude.
+  taxon; rows are Time, Date, Locality (both lines in one cell), Latitude, Longitude, Accuracy,
+  Altitude, Collector.
 - **Selection mode** (toolbar Select/Cancel): rows toggle iOS-style
-  checkmarks, the capture button is replaced by an action bar with a delete
-  button, and deletion asks for confirmation.
+  checkmarks, the capture button is replaced by an action bar with a
+  Labels button (left) and a delete button (right), and deletion asks for
+  confirmation.
+- **Labels**: a full-screen sheet that slides up, previewing labels for the
+  selected readings (oldest first) at 2× via CSS `zoom`, with Done and Print.
+  Labels are rendered twice: in the sheet, and into a `.print-only` copy
+  appended to `<body>`. Print calls the native plugin, which prints the whole
+  web view; `@media print` hides `#app` (and every `dialog`) and shows only the
+  copy. WKWebView and Android WebView ignore `window.print()`, hence the
+  plugin. Label text is 3pt (~4px); Android WebView enlarges text under 8px by
+  default, so the plugin's `load()` lowers the minimum font size.
 - Errors are shown with `alert()`.
 
 ## App identity and App Store plan

@@ -20,12 +20,16 @@ export interface Reading {
   code: string;
   /** Free text entered by the user; null when left blank. */
   locality: string | null;
+  /** Second line of the locality; null when left blank. */
+  locality2: string | null;
   /** Free text entered by the user; null when left blank. */
   taxon: string | null;
+  /** Who collected the specimen; null when left blank. */
+  collector: string | null;
 }
 
 /** The user-supplied fields of a reading, saved alongside its location fix. */
-export type ReadingDetails = Pick<Reading, 'code' | 'locality' | 'taxon'>;
+export type ReadingDetails = Pick<Reading, 'code' | 'locality' | 'locality2' | 'taxon' | 'collector'>;
 
 /** The persistence surface the app depends on. Backed by SQLite natively, stubbed on web. */
 export interface ReadingsStore {
@@ -59,7 +63,9 @@ const UPGRADE_STATEMENTS = [
         recorded_at INTEGER NOT NULL,
         code        TEXT    NOT NULL CHECK (length(code) <= ${MAX_CODE_LENGTH}),
         locality    TEXT,
-        taxon       TEXT
+        locality2   TEXT,
+        taxon       TEXT,
+        collector   TEXT
       );`,
       `CREATE INDEX IF NOT EXISTS idx_readings_recorded_at
          ON readings(recorded_at);`,
@@ -76,7 +82,9 @@ interface ReadingRow {
   recorded_at: number;
   code: string;
   locality: string | null;
+  locality2: string | null;
   taxon: string | null;
+  collector: string | null;
 }
 
 function rowToReading(r: ReadingRow): Reading {
@@ -89,7 +97,9 @@ function rowToReading(r: ReadingRow): Reading {
     recordedAt: r.recorded_at,
     code: r.code,
     locality: r.locality,
+    locality2: r.locality2,
     taxon: r.taxon,
+    collector: r.collector,
   };
 }
 
@@ -119,8 +129,8 @@ class SqliteReadingsStore implements ReadingsStore {
     const c = pos.coords;
     await this.conn().run(
       `INSERT INTO readings
-         (latitude, longitude, accuracy, altitude, recorded_at, code, locality, taxon)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
+         (latitude, longitude, accuracy, altitude, recorded_at, code, locality, locality2, taxon, collector)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       [
         c.latitude,
         c.longitude,
@@ -129,14 +139,16 @@ class SqliteReadingsStore implements ReadingsStore {
         pos.timestamp,
         details.code,
         details.locality,
+        details.locality2,
         details.taxon,
+        details.collector,
       ],
     );
   }
 
   async getReadings(limit = 10, offset = 0): Promise<Reading[]> {
     const res = await this.conn().query(
-      `SELECT id, latitude, longitude, accuracy, altitude, recorded_at, code, locality, taxon
+      `SELECT id, latitude, longitude, accuracy, altitude, recorded_at, code, locality, locality2, taxon, collector
          FROM readings
          ORDER BY recorded_at DESC
          LIMIT ? OFFSET ?;`,
