@@ -1,6 +1,7 @@
 import './style.css';
 import { Geolocation, type Position } from '@capacitor/geolocation';
 import { Capacitor } from '@capacitor/core';
+import { SplashScreen } from '@capacitor/splash-screen';
 import {
   CapacitorBarcodeScanner,
   CapacitorBarcodeScannerTypeHint,
@@ -420,13 +421,18 @@ document.addEventListener('visibilitychange', () => {
 });
 if (document.visibilityState === 'visible') startWatching();
 
-// Open the database and show any previously saved readings on startup.
+// Open the database and show any previously saved readings on startup. The
+// native splash screen stays up until then (launchAutoHide is off), so the
+// user never sees a blank web view.
 (async () => {
   try {
     store = await getStore();
     await refreshHistory();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    await SplashScreen.hide();
     alert(`Storage unavailable: ${msg}`);
+  } finally {
+    await SplashScreen.hide();
   }
 })();

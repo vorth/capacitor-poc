@@ -1,4 +1,4 @@
-package com.example.capacitorpoc;
+package org.vorthmann.checkrspot;
 
 import com.getcapacitor.BridgeActivity;
 
