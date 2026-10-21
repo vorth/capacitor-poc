@@ -27,6 +27,11 @@ dependencies change.
 ## Stack
 
 - Vanilla TypeScript + Vite 8, no framework. TypeScript 6.
+- `vite.config.ts` sets `build.target` to `es2020`/`chrome91`/`safari15`
+  because the app runs in platform WebViews, which can be old (Android 12
+  emulator images ship Chrome ~91; iOS 15 is the deployment target). Without
+  it the minifier drops CSS fallbacks such as `height: 100%` before `100dvh`.
+  When using newer CSS, add a fallback and check it survives in `dist/`.
 - Capacitor 8. iOS dependencies via **Swift Package Manager** (no CocoaPods);
   any new plugin must ship a `Package.swift`.
 - Plugins: `@capacitor/geolocation`, `@capacitor/barcode-scanner` (official

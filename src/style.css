@@ -53,6 +53,8 @@ body {
 /* Full-height column: the readings panel scrolls, the capture button stays
    pinned at the bottom. */
 #app {
+  /* Fallback for WebViews older than Chrome 108, which lack dvh. */
+  height: 100%;
   height: 100dvh;
   max-width: 26rem;
   margin: 0 auto;
