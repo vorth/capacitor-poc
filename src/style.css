@@ -472,6 +472,17 @@ dd {
   text-align: center;
 }
 
+/* Shown in place of the labels while regions are looked up, or if that fails. */
+.labels-status {
+  padding: 2rem 0.5rem;
+  text-align: center;
+}
+
+.labels-status p {
+  margin: 0 0 1.25rem;
+  color: var(--muted);
+}
+
 /* White "paper" in both themes, so the preview looks like the printout. */
 .label-paper {
   padding: 0.5rem;

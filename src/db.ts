@@ -5,6 +5,7 @@ import {
   type SQLiteDBConnection,
 } from '@capacitor-community/sqlite';
 import type { Position } from '@capacitor/geolocation';
+import type { Place } from './geocoder';
 
 /** A persisted location reading, as stored in the `readings` table. */
 export interface Reading {
@@ -26,6 +27,10 @@ export interface Reading {
   taxon: string | null;
   /** Who collected the specimen; null when left blank. */
   collector: string | null;
+  /** From reverse geocoding, e.g. "US-AZ, Pima Co."; null until looked up, or if the service had no name. */
+  region: string | null;
+  /** The reverse-geocoding result, kept for export; null until looked up. */
+  place: Pick<Place, 'source' | 'details'> | null;
 }
 
 /** The user-supplied fields of a reading, saved alongside its location fix. */
@@ -38,6 +43,7 @@ export interface ReadingsStore {
   getReadings(limit?: number, offset?: number): Promise<Reading[]>;
   getReadingCount(): Promise<number>;
   deleteReadings(ids: number[]): Promise<void>;
+  setPlace(id: number, place: Place): Promise<void>;
 }
 
 const DB_NAME = 'readings';
@@ -65,7 +71,10 @@ const UPGRADE_STATEMENTS = [
         locality    TEXT,
         locality2   TEXT,
         taxon       TEXT,
-        collector   TEXT
+        collector   TEXT,
+        region        TEXT,
+        place_source  TEXT,
+        place_details TEXT
       );`,
       `CREATE INDEX IF NOT EXISTS idx_readings_recorded_at
          ON readings(recorded_at);`,
@@ -85,6 +94,9 @@ interface ReadingRow {
   locality2: string | null;
   taxon: string | null;
   collector: string | null;
+  region: string | null;
+  place_source: string | null;
+  place_details: string | null;
 }
 
 function rowToReading(r: ReadingRow): Reading {
@@ -100,6 +112,11 @@ function rowToReading(r: ReadingRow): Reading {
     locality2: r.locality2,
     taxon: r.taxon,
     collector: r.collector,
+    region: r.region,
+    place:
+      r.place_source != null
+        ? { source: r.place_source, details: JSON.parse(r.place_details ?? 'null') }
+        : null,
   };
 }
 
@@ -148,7 +165,8 @@ class SqliteReadingsStore implements ReadingsStore {
 
   async getReadings(limit = 10, offset = 0): Promise<Reading[]> {
     const res = await this.conn().query(
-      `SELECT id, latitude, longitude, accuracy, altitude, recorded_at, code, locality, locality2, taxon, collector
+      `SELECT id, latitude, longitude, accuracy, altitude, recorded_at, code, locality, locality2,
+              taxon, collector, region, place_source, place_details
          FROM readings
          ORDER BY recorded_at DESC
          LIMIT ? OFFSET ?;`,
@@ -166,6 +184,13 @@ class SqliteReadingsStore implements ReadingsStore {
     if (ids.length === 0) return;
     const placeholders = ids.map(() => '?').join(', ');
     await this.conn().run(`DELETE FROM readings WHERE id IN (${placeholders});`, ids);
+  }
+
+  async setPlace(id: number, place: Place): Promise<void> {
+    await this.conn().run(
+      `UPDATE readings SET region = ?, place_source = ?, place_details = ? WHERE id = ?;`,
+      [place.region, place.source, JSON.stringify(place.details), id],
+    );
   }
 }
 
@@ -195,6 +220,8 @@ class WebStubReadingsStore implements ReadingsStore {
       altitude: c.altitude ?? null,
       recordedAt: pos.timestamp,
       ...details,
+      region: null,
+      place: null,
     });
   }
 
@@ -211,6 +238,11 @@ class WebStubReadingsStore implements ReadingsStore {
   async deleteReadings(ids: number[]): Promise<void> {
     const doomed = new Set(ids);
     this.rows = this.rows.filter((r) => !doomed.has(r.id));
+  }
+
+  async setPlace(id: number, place: Place): Promise<void> {
+    const row = this.rows.find((r) => r.id === id);
+    if (row) Object.assign(row, { region: place.region, place: { source: place.source, details: place.details } });
   }
 }
 

@@ -14,6 +14,8 @@ import {
   type ReadingsStore,
 } from './db';
 import { Printer } from './printer';
+import type { ReverseGeocoder } from './geocoder';
+import { NominatimGeocoder } from './nominatim';
 
 const STALE_FIX_MS = 3000;
 // Hysteresis: turn green at GOOD_ACCURACY_M or better, but only drop back to
@@ -62,6 +64,7 @@ app.innerHTML = `
     <dl class="result">
       <div><dt>Time</dt><dd id="time-value">—</dd></div>
       <div><dt>Date</dt><dd id="date-value">—</dd></div>
+      <div><dt>Region</dt><dd id="region-value">—</dd></div>
       <div><dt>Locality</dt><dd id="locality-value">—</dd></div>
       <div><dt>Latitude</dt><dd id="lat">—</dd></div>
       <div><dt>Longitude</dt><dd id="lng">—</dd></div>
@@ -105,9 +108,19 @@ app.innerHTML = `
       <button id="labels-print" type="button" class="text-btn">Print</button>
     </header>
     <div class="sheet-body">
-      <p class="sheet-note">Shown at twice actual size.</p>
-      <div class="label-paper">
-        <div id="label-preview" class="label-output"></div>
+      <div id="labels-status" class="labels-status" hidden>
+        <p id="labels-message"></p>
+        <div id="labels-failed" class="dialog-actions" hidden>
+          <button id="labels-cancel" type="button" class="secondary-btn">Cancel</button>
+          <button id="labels-retry" type="button" class="secondary-btn">Retry</button>
+          <button id="labels-print-anyway" type="button">Print anyway</button>
+        </div>
+      </div>
+      <div id="labels-content">
+        <p class="sheet-note">Shown at twice actual size.</p>
+        <div class="label-paper">
+          <div id="label-preview" class="label-output"></div>
+        </div>
       </div>
     </div>
   </dialog>
@@ -138,6 +151,12 @@ const labelsEl = document.querySelector<HTMLDialogElement>('#labels')!;
 const labelsDoneBtn = document.querySelector<HTMLButtonElement>('#labels-done')!;
 const labelsPrintBtn = document.querySelector<HTMLButtonElement>('#labels-print')!;
 const labelPreview = document.querySelector<HTMLDivElement>('#label-preview')!;
+const labelsStatus = document.querySelector<HTMLDivElement>('#labels-status')!;
+const labelsFailed = document.querySelector<HTMLDivElement>('#labels-failed')!;
+const labelsContent = document.querySelector<HTMLDivElement>('#labels-content')!;
+const labelsCancelBtn = document.querySelector<HTMLButtonElement>('#labels-cancel')!;
+const labelsRetryBtn = document.querySelector<HTMLButtonElement>('#labels-retry')!;
+const labelsPrintAnywayBtn = document.querySelector<HTMLButtonElement>('#labels-print-anyway')!;
 
 // What gets printed: a copy of the labels outside #app, shown only by the
 // print stylesheet (which hides #app, and with it the open labels sheet).
@@ -153,6 +172,26 @@ let readings: Reading[] = [];
 // Most recent position from the location watch; null when we have no usable fix.
 let currentFix: Position | null = null;
 
+// Region lookups run only on demand: when a reading is inspected, and for
+// labels. See dev-docs/reverse-geocoding.md.
+const geocoder: ReverseGeocoder = new NominatimGeocoder();
+
+// Look up a reading's place and save it. Resolves with the updated reading,
+// which also replaces the old one in `readings`.
+async function resolvePlace(r: Reading): Promise<Reading> {
+  const place = await geocoder.lookup(r.latitude, r.longitude);
+  if (!store) throw new Error('storage unavailable');
+  await store.setPlace(r.id, place);
+  const updated: Reading = {
+    ...r,
+    region: place.region,
+    place: { source: place.source, details: place.details },
+  };
+  const i = readings.findIndex((x) => x.id === r.id);
+  if (i >= 0) readings[i] = updated;
+  return updated;
+}
+
 const set = (id: string, value: string) => {
   document.querySelector<HTMLElement>(`#${id}`)!.textContent = value;
 };
@@ -167,12 +206,30 @@ function formatReading(r: Reading): { date: string; time: string } {
   };
 }
 
+// The reading shown in the inspector, so a region that arrives after the
+// inspector has closed (or moved on) isn't shown on the wrong reading.
+let inspectedId: number | null = null;
+
 function inspect(r: Reading) {
   const { date, time } = formatReading(r);
+  inspectedId = r.id;
   set('inspector-code', r.code);
   set('inspector-taxon', r.taxon ?? '');
   set('time-value', time);
   set('date-value', date);
+  if (r.place) {
+    set('region-value', r.region ?? '—');
+  } else {
+    set('region-value', 'Looking up…');
+    resolvePlace(r).then(
+      (u) => {
+        if (inspectedId === u.id) set('region-value', u.region ?? '—');
+      },
+      () => {
+        if (inspectedId === r.id) set('region-value', '—');
+      },
+    );
+  }
   // Both locality lines in one cell, one per line.
   const localityLines = [r.locality, r.locality2].filter((line) => line != null);
   const localityEl = document.querySelector<HTMLElement>('#locality-value')!;
@@ -189,6 +246,10 @@ function inspect(r: Reading) {
   set('alt', r.altitude != null ? `${r.altitude.toFixed(0)} m` : 'n/a');
   inspectorEl.showModal();
 }
+
+inspectorEl.addEventListener('close', () => {
+  inspectedId = null;
+});
 
 // Selection mode: rows toggle selection instead of opening the inspector,
 // and the capture button is replaced by the action bar.
@@ -217,7 +278,10 @@ function setSelecting(on: boolean) {
   renderSelection();
 }
 
-function onReadingTap(r: Reading) {
+function onReadingTap(id: number) {
+  // Look the reading up again: a region lookup may have replaced it.
+  const r = readings.find((x) => x.id === id);
+  if (!r) return;
   if (!selecting) {
     inspect(r);
     return;
@@ -248,7 +312,7 @@ async function refreshHistory() {
       taxonEl.className = 'taxon';
       taxonEl.textContent = r.taxon ?? '';
       item.append(check, codeEl, taxonEl);
-      item.addEventListener('click', () => onReadingTap(r));
+      item.addEventListener('click', () => onReadingTap(r.id));
       li.append(item);
       return li;
     }),
@@ -300,6 +364,7 @@ function labelFor(r: Reading): HTMLElement {
   const dateTime = span(date);
   dateTime.append(span(time, 'label-time'));
   const locality = [
+    r.region ? span(r.region) : null,
     r.locality ? span(r.locality) : null,
     r.locality2 ? span(r.locality2) : null,
     span(`${r.latitude.toFixed(5)}, ${r.longitude.toFixed(5)} ±${r.accuracy.toFixed(0)}m`),
@@ -313,23 +378,73 @@ function labelFor(r: Reading): HTMLElement {
   return label;
 }
 
-// Labels for the selected readings, oldest first.
-function renderLabels() {
-  const chosen = readings
+// The selected readings, oldest first.
+function selectedReadings(): Reading[] {
+  return readings
     .filter((r) => selected.has(r.id))
     .sort((a, b) => a.recordedAt - b.recordedAt);
+}
+
+function renderLabels() {
+  const chosen = selectedReadings();
   labelPreview.replaceChildren(...chosen.map(labelFor));
   labelPrintEl.replaceChildren(...chosen.map(labelFor));
+  labelsStatus.hidden = true;
+  labelsContent.hidden = false;
+  labelsPrintBtn.disabled = false;
+}
+
+// Either the labels, or a message (with the failure buttons when `failed`).
+function showLabelsStatus(message: string, failed = false) {
+  set('labels-message', message);
+  labelsFailed.hidden = !failed;
+  labelsStatus.hidden = false;
+  labelsContent.hidden = true;
+  labelsPrintBtn.disabled = true;
+}
+
+// Each opening of the sheet (and each retry) is a new run; lookups from an
+// earlier run still save their results but no longer update the sheet.
+let labelsRun = 0;
+
+// Look up regions for the selected readings that lack one, then show the labels.
+async function prepareLabels() {
+  const run = ++labelsRun;
+  const pending = selectedReadings().filter((r) => r.place == null);
+  if (pending.length === 0) {
+    renderLabels();
+    return;
+  }
+  let settled = 0;
+  const progress = () => `Reverse geocoding… ${settled} of ${pending.length}`;
+  showLabelsStatus(progress());
+  const results = await Promise.allSettled(
+    pending.map((r) =>
+      resolvePlace(r).finally(() => {
+        settled++;
+        if (run === labelsRun) showLabelsStatus(progress());
+      }),
+    ),
+  );
+  if (run !== labelsRun) return;
+  const failed = results.filter((res) => res.status === 'rejected').length;
+  if (failed === 0) renderLabels();
+  else {
+    showLabelsStatus(
+      `Couldn't look up the region for ${failed} of ${pending.length} reading${pending.length === 1 ? '' : 's'}.`,
+      true,
+    );
+  }
 }
 
 labelsBtn.addEventListener('click', () => {
-  renderLabels();
   labelsEl.querySelector('.sheet-body')!.scrollTop = 0;
   labelsEl.showModal();
+  prepareLabels();
 });
 
 // Slide the sheet out, then close it.
-labelsDoneBtn.addEventListener('click', () => {
+function closeLabels() {
   labelsEl.classList.add('closing');
   const done = () => {
     labelsEl.classList.remove('closing');
@@ -337,9 +452,18 @@ labelsDoneBtn.addEventListener('click', () => {
   };
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) done();
   else labelsEl.addEventListener('animationend', done, { once: true });
+}
+
+labelsDoneBtn.addEventListener('click', closeLabels);
+labelsCancelBtn.addEventListener('click', closeLabels);
+labelsRetryBtn.addEventListener('click', prepareLabels);
+
+// Also covers closing by other means, such as Android's back button.
+labelsEl.addEventListener('close', () => {
+  labelsRun++;
 });
 
-labelsPrintBtn.addEventListener('click', async () => {
+async function printLabels() {
   labelsPrintBtn.disabled = true;
   try {
     await Printer.printWebView({ jobName: 'Specimen Labels' });
@@ -349,6 +473,15 @@ labelsPrintBtn.addEventListener('click', async () => {
   } finally {
     labelsPrintBtn.disabled = false;
   }
+}
+
+labelsPrintBtn.addEventListener('click', printLabels);
+
+// Show the labels, without a region on the readings that failed, and print.
+labelsPrintAnywayBtn.addEventListener('click', () => {
+  labelsRun++;
+  renderLabels();
+  printLabels();
 });
 
 // Tapping the backdrop (outside the dialog box) closes a dialog.

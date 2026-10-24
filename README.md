@@ -18,6 +18,9 @@ database.
 - **Printing:** a small plugin inside the app (`PrinterPlugin` in `ios/App/App/`
   and the Android `org.vorthmann.checkrspot` package) that opens the system
   print dialog for the web view; `window.print()` on web
+- **Reverse geocoding:** OpenStreetMap's [Nominatim](https://nominatim.org/),
+  called with `CapacitorHttp` (part of `@capacitor/core`) — see
+  [Region lookup](#region-lookup)
 
 ## Using the app
 
@@ -30,11 +33,30 @@ database.
   tapped the button. Both locality lines and Collector start out filled in
   with the values from the last reading you saved.
 - The list shows each reading's ID and taxon, newest first. Tap one to see its
-  time, date, locality, coordinates, accuracy, altitude and collector.
+  time, date, region, locality, coordinates, accuracy, altitude and collector.
 - **Select** lets you pick readings and delete them, or tap **Labels** to
   preview specimen labels for them (oldest first, shown at twice actual size)
-  and **Print** them. Each label has a locality block (both locality lines, coordinates
+  and **Print** them. Each label has a locality block (region, both locality lines, coordinates
   ± accuracy, date and time, elevation, collector), the taxon if there is one, and the ID in large type.
+  If any of the readings still need their region looked up, the sheet shows
+  "Reverse geocoding…" first; if a lookup fails you can **Retry**, **Cancel**,
+  or **Print anyway** without the missing regions.
+
+## Region lookup
+
+Each reading gets a short **region** such as `US-AZ, Pima Co.` (the ISO region
+code, then the county or nearest equivalent) from Nominatim. The app is often
+used without a network, so nothing is looked up when a reading is captured.
+A lookup happens only when you open a reading in the list (for that reading)
+or tap **Labels** (for the selected readings that don't have one yet). Results
+are saved, so each reading is looked up once.
+
+Nominatim's [usage policy](https://operations.osmfoundation.org/policies/nominatim/)
+allows at most one request per second across all users of the app, so
+requests are queued about 1.5 s apart and nearby readings share a cached
+answer. The full response is stored for a future export; its data is
+© OpenStreetMap contributors (ODbL). The design is in
+[`dev-docs/reverse-geocoding.md`](dev-docs/reverse-geocoding.md).
 
 ## Prerequisites
 
@@ -86,7 +108,9 @@ the first time you scan.
 
 Each reading is saved to a `readings` table: latitude, longitude, accuracy,
 altitude, recorded-at timestamp, `code` (the scanned ID, at most 25
-characters), `locality`, `locality2`, `taxon` and `collector`. See `src/db.ts` for the schema and
+characters), `locality`, `locality2`, `taxon`, `collector`, and from the
+region lookup `region`, `place_source` (e.g. `nominatim`; empty until looked
+up) and `place_details` (the service's full response as JSON). See `src/db.ts` for the schema and
 `ReadingsStore` interface.
 
 - **Native (iOS/Android):** backed by real SQLite via
@@ -106,7 +130,10 @@ A failed save is reported in an alert rather than crashing the app.
 - `src/main.ts` — UI, location watching, scanning and the capture flow
 - `src/db.ts` — `ReadingsStore` (SQLite on native, in-memory stub on web) and schema
 - `src/printer.ts` — JS side of the app's own `Printer` plugin
+- `src/geocoder.ts` — the `ReverseGeocoder` interface the app uses for region lookups
+- `src/nominatim.ts` — its Nominatim implementation (request queue, cache, region format)
 - `src/style.css` — styles (light/dark aware), including the label and print styles
 - `capacitor.config.ts` — Capacitor config (appId, webDir)
 - `ios/`, `android/` — native platform projects
+- `dev-docs/` — design notes
 - `CLAUDE.md` — notes for Claude Code sessions

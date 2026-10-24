@@ -3,8 +3,9 @@
 Field data-collection app (Capacitor 8, iOS + Android). At each spot the
 user scans a short QR code ID tag, and the app saves it with a GPS fix and
 optional free-text **locality** (two lines), **taxon** and **collector**. Readings are stored locally in
-SQLite; photos are not taken or stored. Pre-release proof of concept with no
-users yet.
+SQLite; photos are not taken or stored. A **region** (e.g. `US-AZ, Pima Co.`)
+is added later by reverse geocoding, on demand. Pre-release proof of concept
+with no users yet.
 
 The [README.md](README.md) covers setup, build/run commands, permissions and
 persistence for humans. Keep it in sync when behaviour, schema, permissions or
@@ -45,6 +46,13 @@ dependencies change.
   components or state library.
 - `src/db.ts` — `Reading` type, `ReadingsStore` interface, schema, and two
   implementations: SQLite on native, in-memory stub on web (`npm run dev`).
+- `src/geocoder.ts` — `Place` and `ReverseGeocoder`, the service-neutral
+  interface for region lookups. The app depends only on this.
+- `src/nominatim.ts` — `NominatimGeocoder`: serial request queue (≥ 1.5 s
+  apart), cache keyed by coordinates rounded to 0.001°, offline fail-fast,
+  region formatting. Uses `CapacitorHttp` so it can send a User-Agent.
+- `dev-docs/reverse-geocoding.md` — design of the region lookup, including
+  the decisions behind it (temperature and elevation lookups dropped).
 - `src/printer.ts` — `Printer` plugin wrapper (`printWebView`); falls back to
   `window.print()` on web.
 - `src/style.css` — light/dark themes via CSS variables on `:root`; iOS-like
@@ -64,12 +72,18 @@ Table `readings` (`src/db.ts`): `id` (autoincrement row id), `latitude`,
 `longitude`, `accuracy` (m), `altitude` (m, nullable), `recorded_at` (epoch
 ms, from the fix's timestamp), `code` (text, NOT NULL, CHECK length ≤
 `MAX_CODE_LENGTH` = 25), `locality`, `locality2`, `taxon` and `collector`
-(text, null when blank). `locality2` is the locality's second line. TS fields are camelCase (`recordedAt`); `ReadingDetails` = code +
+(text, null when blank), `region`, `place_source` and `place_details`
+(reverse geocoding; all null until looked up). `locality2` is the locality's second line. TS fields are camelCase (`recordedAt`); `ReadingDetails` = code +
 locality + locality2 + taxon + collector.
 
 - `id` is the row id. The scanned value is **`code`** (the user rejected
   reusing `id` for it). The UI labels the code "ID".
 - Codes are short alphanumerics, typically 2–5 characters, never more than 25.
+- `place_source` null means "not looked up yet" (TS: `place == null`).
+  `place_details` is the service's whole response as JSON, kept for a future
+  JSON export (which must credit © OpenStreetMap contributors). A spot with
+  no name (open ocean) has a place but `region` null. The data field is
+  `region`, not `location` (too close to `locality`).
 - **Schema policy before first release:** edit the version-1 statement in
   place and keep `DB_VERSION = 1`; no migrations. Existing installs must be
   deleted and reinstalled after a schema change; tell the user this. After
@@ -106,14 +120,28 @@ locality + locality2 + taxon + collector.
     extra permission.
 - **List**: all readings, newest first. Each row shows code (bold, left) and
   taxon (right, ellipsized). Tap opens the inspector dialog: title is code +
-  taxon; rows are Time, Date, Locality (both lines in one cell), Latitude, Longitude, Accuracy,
+  taxon; rows are Time, Date, Region, Locality (both lines in one cell), Latitude, Longitude, Accuracy,
   Altitude, Collector.
+- **Region lookup** (Nominatim, `zoom=9`, `accept-language=en`,
+  User-Agent `CheckrSpot/2.0`, no contact email by the user's choice) runs
+  only on demand, never at capture or in the background: opening the
+  inspector looks up **that reading only** (Region row shows "Looking up…",
+  then updates if still open; "—" on failure), and Labels looks up the
+  selected readings. `resolvePlace` in `main.ts` does lookup → `setPlace` →
+  replaces the reading in `readings`; list rows look readings up by id for
+  this reason.
 - **Selection mode** (toolbar Select/Cancel): rows toggle iOS-style
   checkmarks, the capture button is replaced by an action bar with a
   Labels button (left) and a delete button (right), and deletion asks for
   confirmation.
 - **Labels**: a full-screen sheet that slides up, previewing labels for the
   selected readings (oldest first) at 2× via CSS `zoom`, with Done and Print.
+  If any selected reading has no place yet, the sheet first shows
+  "Reverse geocoding… n of m" (Print disabled); on failures it shows
+  Cancel / Retry / Print anyway (renders labels without those regions and
+  prints). Each opening or retry is a run (`labelsRun`); stale runs' results
+  are saved but don't touch the sheet. Region is the first line of the
+  label's locality block.
   Labels are rendered twice: in the sheet, and into a `.print-only` copy
   appended to `<body>`. Print calls the native plugin, which prints the whole
   web view; `@media print` hides `#app` (and every `dialog`) and shows only the
