@@ -97,7 +97,12 @@ button:hover:not(:disabled) {
 .toolbar {
   flex: none;
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+}
+
+/* Keeps Select on the right while Import is hidden. */
+.toolbar #select-btn {
+  margin-left: auto;
 }
 
 /* Plain tinted-text and icon buttons, as in iOS navigation bars and toolbars. */

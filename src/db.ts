@@ -4,7 +4,6 @@ import {
   SQLiteConnection,
   type SQLiteDBConnection,
 } from '@capacitor-community/sqlite';
-import type { Position } from '@capacitor/geolocation';
 import type { Place } from './geocoder';
 
 /** A persisted location reading, as stored in the `readings` table. */
@@ -12,10 +11,11 @@ export interface Reading {
   id: number;
   latitude: number;
   longitude: number;
-  accuracy: number;
+  /** Metres; null when unknown (photos often don't record it). */
+  accuracy: number | null;
   /** Metres; null when the device does not report altitude. */
   altitude: number | null;
-  /** Epoch milliseconds, from Position.timestamp. */
+  /** Epoch milliseconds, from Position.timestamp or the photo's capture time. */
   recordedAt: number;
   /** The ID scanned from the QR code at this location; at most MAX_CODE_LENGTH characters. */
   code: string;
@@ -36,10 +36,13 @@ export interface Reading {
 /** The user-supplied fields of a reading, saved alongside its location fix. */
 export type ReadingDetails = Pick<Reading, 'code' | 'locality' | 'locality2' | 'taxon' | 'collector'>;
 
+/** Where and when a reading was taken: a live GPS fix, or an imported photo's metadata. */
+export type Fix = Pick<Reading, 'latitude' | 'longitude' | 'accuracy' | 'altitude' | 'recordedAt'>;
+
 /** The persistence surface the app depends on. Backed by SQLite natively, stubbed on web. */
 export interface ReadingsStore {
   init(): Promise<void>;
-  insertReading(pos: Position, details: ReadingDetails): Promise<void>;
+  insertReading(fix: Fix, details: ReadingDetails): Promise<void>;
   getReadings(limit?: number, offset?: number): Promise<Reading[]>;
   getReadingCount(): Promise<number>;
   deleteReadings(ids: number[]): Promise<void>;
@@ -64,7 +67,7 @@ const UPGRADE_STATEMENTS = [
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         latitude    REAL    NOT NULL,
         longitude   REAL    NOT NULL,
-        accuracy    REAL    NOT NULL,
+        accuracy    REAL,
         altitude    REAL,
         recorded_at INTEGER NOT NULL,
         code        TEXT    NOT NULL CHECK (length(code) <= ${MAX_CODE_LENGTH}),
@@ -86,7 +89,7 @@ interface ReadingRow {
   id: number;
   latitude: number;
   longitude: number;
-  accuracy: number;
+  accuracy: number | null;
   altitude: number | null;
   recorded_at: number;
   code: string;
@@ -142,18 +145,17 @@ class SqliteReadingsStore implements ReadingsStore {
     return this.db;
   }
 
-  async insertReading(pos: Position, details: ReadingDetails): Promise<void> {
-    const c = pos.coords;
+  async insertReading(fix: Fix, details: ReadingDetails): Promise<void> {
     await this.conn().run(
       `INSERT INTO readings
          (latitude, longitude, accuracy, altitude, recorded_at, code, locality, locality2, taxon, collector)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       [
-        c.latitude,
-        c.longitude,
-        c.accuracy,
-        c.altitude ?? null,
-        pos.timestamp,
+        fix.latitude,
+        fix.longitude,
+        fix.accuracy,
+        fix.altitude,
+        fix.recordedAt,
         details.code,
         details.locality,
         details.locality2,
@@ -210,15 +212,10 @@ class WebStubReadingsStore implements ReadingsStore {
     );
   }
 
-  async insertReading(pos: Position, details: ReadingDetails): Promise<void> {
-    const c = pos.coords;
+  async insertReading(fix: Fix, details: ReadingDetails): Promise<void> {
     this.rows.push({
       id: this.nextId++,
-      latitude: c.latitude,
-      longitude: c.longitude,
-      accuracy: c.accuracy,
-      altitude: c.altitude ?? null,
-      recordedAt: pos.timestamp,
+      ...fix,
       ...details,
       region: null,
       place: null,

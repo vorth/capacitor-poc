@@ -9,6 +9,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(PrinterPlugin.class);
         registerPlugin(FileSaverPlugin.class);
+        registerPlugin(PhotoImportPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

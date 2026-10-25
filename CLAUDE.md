@@ -2,8 +2,9 @@
 
 Field data-collection app (Capacitor 8, iOS + Android). At each spot the
 user scans a short QR code ID tag, and the app saves it with a GPS fix and
-optional free-text **locality** (two lines), **taxon** and **collector**. Readings are stored locally in
-SQLite; photos are not taken or stored. A **region** (e.g. `US-AZ, Pima Co.`)
+optional free-text **locality** (two lines), **taxon** and **collector**. Readings can also be
+imported from library photos (EXIF time and GPS, plus a QR code if present). Readings are stored
+locally in SQLite; photos are not taken or stored. A **region** (e.g. `US-AZ, Pima Co.`)
 is added later by reverse geocoding, on demand. Pre-release proof of concept
 with no users yet.
 
@@ -59,6 +60,9 @@ dependencies change.
   the inspector).
 - `src/fileSaver.ts` — `FileSaver` plugin wrapper (`saveFile`); browser
   download on web.
+- `src/photoImport.ts` — `PhotoImport` plugin wrapper (`pickPhotos`, native
+  only) and `photoReading`, which validates a picked photo and turns its
+  metadata into a `Fix` + code.
 - `src/printer.ts` — `Printer` plugin wrapper (`printWebView`); falls back to
   `window.print()` on web.
 - `src/style.css` — light/dark themes via CSS variables on `:root`; iOS-like
@@ -71,10 +75,19 @@ dependencies change.
 - `ios/App/App/FileSaverPlugin.swift` — the app's own `FileSaver` plugin:
   writes a temp file and presents `UIDocumentPickerViewController(forExporting:)`.
   Added to `project.pbxproj` by hand (the project doesn't use synchronized
-  folders), as was `PrinterPlugin.swift`.
+  folders), as were `PrinterPlugin.swift` and `PhotoImportPlugin.swift`.
+- `ios/App/App/PhotoImportPlugin.swift` — the app's own `PhotoImport`
+  plugin: `PHPickerViewController` (no permission, `.current` representation
+  so the original file and metadata come through), ImageIO for EXIF/GPS,
+  Vision for QR codes.
 - `android/app/src/main/java/org/vorthmann/checkrspot/PrinterPlugin.java` and
-  `FileSaverPlugin.java` (`ACTION_CREATE_DOCUMENT`, no storage permission) —
-  Android plugins, registered in `MainActivity`. No official Capacitor plugin
+  `FileSaverPlugin.java` (`ACTION_CREATE_DOCUMENT`, no storage permission) and
+  `PhotoImportPlugin.java` — Android plugins, registered in `MainActivity`.
+  PhotoImport uses `ACTION_OPEN_DOCUMENT`, not the photo picker (which always
+  strips GPS), requests `ACCESS_MEDIA_LOCATION`, and reads the
+  `MediaStore.setRequireOriginal` URI when it can; EXIF via
+  `androidx.exifinterface`, QR via ML Kit (same version as the scanner
+  plugin's); both are declared in `android/app/build.gradle`. No official Capacitor plugin
   offers a "save as" dialog, hence our own (the user chose this over
   Filesystem + Share).
 - `ios/App/App/Info.plist` — camera and location usage strings.
@@ -83,12 +96,15 @@ dependencies change.
 ## Data model
 
 Table `readings` (`src/db.ts`): `id` (autoincrement row id), `latitude`,
-`longitude`, `accuracy` (m), `altitude` (m, nullable), `recorded_at` (epoch
+`longitude`, `accuracy` (m, nullable: imported photos often lack
+`GPSHPositioningError`), `altitude` (m, nullable), `recorded_at` (epoch
 ms, from the fix's timestamp), `code` (text, NOT NULL, CHECK length ≤
 `MAX_CODE_LENGTH` = 25), `locality`, `locality2`, `taxon` and `collector`
 (text, null when blank), `region`, `place_source` and `place_details`
 (reverse geocoding; all null until looked up). `locality2` is the locality's second line. TS fields are camelCase (`recordedAt`); `ReadingDetails` = code +
-locality + locality2 + taxon + collector.
+locality + locality2 + taxon + collector. `Fix` = latitude, longitude,
+accuracy, altitude, recordedAt; `insertReading(fix, details)` takes one, built
+from a `Position` (capture) or a photo (import).
 
 - `id` is the row id. The scanned value is **`code`** (the user rejected
   reusing `id` for it). The UI labels the code "ID".
@@ -132,6 +148,19 @@ locality + locality2 + taxon + collector.
     Inputs are ≥ 16px to avoid iOS focus zoom. The dialog sits near the top so
     the keyboard doesn't cover it. Native keyboard dictation works with no
     extra permission.
+- **Photo import** (toolbar Import, hidden in selection mode;
+  `importPhotos`): native picker, multiple selection → for each photo,
+  `photoReading` requires lat/long, a capture time and at most one QR code
+  (≤ 25 chars); with none, `code` is `''` (column stays NOT NULL). Time: EXIF DateTimeOriginal + OffsetTimeOriginal, else GPS
+  date/time (UTC), else DateTimeOriginal as device-local time. Photos whose
+  code + recordedAt match an existing reading are skipped as duplicates. One
+  photo picked → details dialog (as at capture; Discard drops it); several →
+  saved with the remembered collector (`lastDetails`), no locality or taxon.
+  Native reads photos one at a time (iOS: chained completion handlers, no
+  blocking) and sends `importProgress` events before each; the app shows
+  them in a modal `#import-status` dialog ("Reading photos… n of m"). Problems are listed in an alert afterwards (toast
+  if none); the list then scrolls to the newest imported reading. Accuracy
+  shows "n/a" in the inspector and is left off labels when null.
 - **List**: all readings, newest first. Each row shows code (bold, left) and
   taxon (right, ellipsized). Tap opens the inspector dialog: title is code +
   taxon; rows are Time, Date, Region, Locality (both lines in one cell), Latitude, Longitude, Accuracy,

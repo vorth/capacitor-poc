@@ -43,4 +43,7 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-feature android:name="android.hardware.location.gps" />
+
+    <!-- Photo import: keep the location in photos the user picks -->
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
 </manifest>

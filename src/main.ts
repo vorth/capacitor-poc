@@ -10,6 +10,7 @@ import {
 import {
   getStore,
   MAX_CODE_LENGTH,
+  type Fix,
   type Reading,
   type ReadingDetails,
   type ReadingsStore,
@@ -19,6 +20,7 @@ import { FileSaver } from './fileSaver';
 import type { ReverseGeocoder } from './geocoder';
 import { NominatimGeocoder } from './nominatim';
 import { exportFilename, formatReading, toCSV, toJSON, type ExportFormat } from './export';
+import { PhotoImport, photoReading, type PickedPhoto } from './photoImport';
 
 const STALE_FIX_MS = 3000;
 // Hysteresis: turn green at GOOD_ACCURACY_M or better, but only drop back to
@@ -33,6 +35,7 @@ const app = document.querySelector<HTMLDivElement>('#app')!;
 
 app.innerHTML = `
   <header class="toolbar">
+    <button id="import-btn" type="button" class="text-btn">Import</button>
     <button id="select-btn" type="button" class="text-btn">Select</button>
   </header>
   <main class="card">
@@ -163,6 +166,9 @@ app.innerHTML = `
       <button id="export-continue" type="button" hidden>Continue anyway</button>
     </div>
   </dialog>
+  <dialog id="import-status" class="inspector" aria-labelledby="import-message">
+    <p id="import-message" class="export-message"></p>
+  </dialog>
   <dialog id="confirm-delete" class="inspector" aria-labelledby="confirm-title">
     <h2 id="confirm-title"></h2>
     <p class="confirm-note">This can't be undone.</p>
@@ -177,6 +183,8 @@ const btn = document.querySelector<HTMLButtonElement>('#fix-btn')!;
 const historyEl = document.querySelector<HTMLOListElement>('#history-list')!;
 const inspectorEl = document.querySelector<HTMLDialogElement>('#inspector')!;
 const selectBtn = document.querySelector<HTMLButtonElement>('#select-btn')!;
+const importBtn = document.querySelector<HTMLButtonElement>('#import-btn')!;
+const importStatusEl = document.querySelector<HTMLDialogElement>('#import-status')!;
 const actionBar = document.querySelector<HTMLDivElement>('#action-bar')!;
 const deleteBtn = document.querySelector<HTMLButtonElement>('#delete-btn')!;
 const confirmEl = document.querySelector<HTMLDialogElement>('#confirm-delete')!;
@@ -278,7 +286,7 @@ function inspect(r: Reading) {
   set('collector-value', r.collector ?? '—');
   set('lat', r.latitude.toFixed(5) + '°');
   set('lng', r.longitude.toFixed(5) + '°');
-  set('acc', `± ${r.accuracy.toFixed(0)} m`);
+  set('acc', r.accuracy != null ? `± ${r.accuracy.toFixed(0)} m` : 'n/a');
   set('alt', r.altitude != null ? `${r.altitude.toFixed(0)} m` : 'n/a');
   inspectorEl.showModal();
 }
@@ -297,6 +305,7 @@ function renderSelection() {
   selectBtn.textContent = selecting ? 'Cancel' : 'Select';
   selectBtn.disabled = !selecting && historyEl.childElementCount === 0;
   actionBar.hidden = !selecting;
+  importBtn.hidden = selecting;
   btn.hidden = selecting;
   deleteBtn.disabled = selected.size === 0;
   labelsBtn.disabled = selected.size === 0;
@@ -405,7 +414,10 @@ function labelFor(r: Reading): HTMLElement {
     r.region ? span(r.region) : null,
     r.locality ? span(r.locality) : null,
     r.locality2 ? span(r.locality2) : null,
-    span(`${r.latitude.toFixed(5)}, ${r.longitude.toFixed(5)} ±${r.accuracy.toFixed(0)}m`),
+    span(
+      `${r.latitude.toFixed(5)}, ${r.longitude.toFixed(5)}` +
+        (r.accuracy != null ? ` ±${r.accuracy.toFixed(0)}m` : ''),
+    ),
     dateTime,
     r.altitude != null ? span(`elev. ${r.altitude.toFixed(0)}m`) : null,
     r.collector ? span(r.collector) : null,
@@ -863,7 +875,7 @@ async function recordFix() {
   if (!details) return;
   try {
     if (!store) throw new Error('storage unavailable');
-    await store.insertReading(pos, details);
+    await store.insertReading(fixFromPosition(pos), details);
     await refreshHistory();
     historyEl.parentElement!.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (saveErr) {
@@ -873,6 +885,118 @@ async function recordFix() {
 }
 
 btn.addEventListener('click', recordFix);
+
+function fixFromPosition(pos: Position): Fix {
+  return {
+    latitude: pos.coords.latitude,
+    longitude: pos.coords.longitude,
+    accuracy: pos.coords.accuracy,
+    altitude: pos.coords.altitude ?? null,
+    recordedAt: pos.timestamp,
+  };
+}
+
+let importing = false;
+
+// Import readings from photos, each of which needs a location and a capture
+// time, and at most one QR code (none leaves the ID empty). A single photo gets
+// the details dialog, as when capturing; several are saved with the last used
+// collector and no locality or taxon.
+async function importPhotos() {
+  if (importing) return;
+  importing = true;
+  let photos: PickedPhoto[];
+  // Reading the photos can take a while (some may first download from iCloud).
+  const progress = await PhotoImport.addListener('importProgress', ({ done, total }) => {
+    set('import-message', `Reading photos… ${done} of ${total}`);
+    if (!importStatusEl.open) importStatusEl.showModal();
+  });
+  try {
+    ({ photos } = await PhotoImport.pickPhotos());
+  } finally {
+    importing = false;
+    progress.remove();
+    importStatusEl.close();
+  }
+  if (photos.length === 0) return;
+
+  // Photos not imported, and why.
+  const problems: { name: string; problem: string }[] = [];
+  const toSave: { fix: Fix; details: ReadingDetails }[] = [];
+  const collector = loadLastDetails().collector ?? null;
+  // Importing a photo again would duplicate its reading.
+  const seen = new Set(readings.map((r) => `${r.code}@${r.recordedAt}`));
+  photos.forEach((p, i) => {
+    const name = p.name ?? `Photo ${i + 1}`;
+    const result = photoReading(p);
+    if ('problem' in result) {
+      problems.push({ name, problem: result.problem });
+      return;
+    }
+    const key = `${result.code}@${result.fix.recordedAt}`;
+    if (seen.has(key)) {
+      problems.push({ name, problem: 'already in the list' });
+      return;
+    }
+    seen.add(key);
+    const details = { code: result.code, locality: null, locality2: null, taxon: null, collector };
+    toSave.push({ fix: result.fix, details });
+  });
+
+  if (photos.length === 1) {
+    if (toSave.length === 0) {
+      alert(`Photo not imported: ${problems[0].problem}.`);
+      return;
+    }
+    const details = await askDetails(toSave[0].details.code);
+    if (!details) return;
+    toSave[0].details = details;
+  }
+
+  let saved = 0;
+  let saveError: string | null = null;
+  try {
+    if (!store) throw new Error('storage unavailable');
+    for (const { fix, details } of toSave) {
+      await store.insertReading(fix, details);
+      saved++;
+    }
+  } catch (saveErr) {
+    const msg = saveErr instanceof Error ? saveErr.message : String(saveErr);
+    saveError = `Not saved: ${msg}`;
+  }
+  if (saved > 0) {
+    await refreshHistory();
+    // The newest imported reading; older photos land further down the list.
+    const newest = toSave
+      .slice(0, saved)
+      .reduce((a, b) => (b.fix.recordedAt > a.fix.recordedAt ? b : a));
+    revealReading(newest.details.code, newest.fix.recordedAt);
+  }
+  const what = `${saved} reading${saved === 1 ? '' : 's'}`;
+  const notes = problems.map(({ name, problem }) => `${name}: ${problem}`);
+  if (saveError) notes.push(saveError);
+  if (notes.length === 0) showToast(`Imported ${what}`);
+  else alert(`Imported ${what} from ${photos.length} photos.\n\n${notes.join('\n')}`);
+}
+
+// Scroll a reading into view, found by its code and time (the caller doesn't
+// know its id).
+function revealReading(code: string, recordedAt: number) {
+  const r = readings.find((x) => x.code === code && x.recordedAt === recordedAt);
+  if (!r) return;
+  historyEl
+    .querySelector(`[data-id="${r.id}"]`)
+    ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+// Any failure, including an unexpected one, is reported rather than lost.
+importBtn.addEventListener('click', () =>
+  importPhotos().catch((err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    alert(`Import failed: ${msg}`);
+  }),
+);
 render();
 renderSelection();
 

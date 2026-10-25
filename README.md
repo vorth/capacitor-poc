@@ -19,6 +19,10 @@ database.
   and the Android `org.vorthmann.checkrspot` package) that opens the system
   print dialog for the web view; `window.print()` on web
 - **Clipboard:** [`@capacitor/clipboard`](https://capacitorjs.com/docs/apis/clipboard)
+- **Photo import:** a third in-app plugin (`PhotoImportPlugin`): the system
+  photo picker, EXIF via ImageIO and QR detection via Vision on iOS; the
+  document picker, `androidx.exifinterface` and ML Kit barcode scanning on
+  Android. Not available on web
 - **Saving files:** another small in-app plugin (`FileSaverPlugin`) that opens
   the system save dialog (iOS document picker, Android "save as"); no
   permissions needed. A browser download on web
@@ -36,6 +40,14 @@ database.
   **Discard** to drop the reading. The location saved is the one from when you
   tapped the button. Both locality lines and Collector start out filled in
   with the values from the last reading you saved.
+- **Import** (top left) creates readings from photos you choose from your
+  library. Each photo must have a location and capture date in its metadata;
+  the reading gets the photo's time, position, altitude and (when recorded)
+  GPS accuracy, and the ID from the QR code in the photo (left empty if there
+  is none; photos with more than one are skipped). Import one photo and the
+  usual Locality / Taxon / Collector dialog appears; import several and they
+  get the last used collector, with no locality or taxon. Photos that can't be used, or whose reading is already in
+  the list, are skipped and listed afterwards.
 - The list shows each reading's ID and taxon, newest first. Tap one to see its
   time, date, region, locality, coordinates, accuracy, altitude and collector.
 - **Select** lets you pick readings and delete them, or tap **Labels** to
@@ -109,18 +121,22 @@ version of CheckrSpot. Archived (Release) builds use the real bundle id
 ## Permissions
 
 - **iOS** — `NSLocationWhenInUseUsageDescription` and `NSCameraUsageDescription`
-  in `ios/App/App/Info.plist`
+  in `ios/App/App/Info.plist`. Photo import needs no permission: the system
+  picker hands over only the photos chosen, with their metadata.
 - **Android** — `ACCESS_COARSE_LOCATION` / `ACCESS_FINE_LOCATION` in
   `android/app/src/main/AndroidManifest.xml`; the camera permission is expected
-  to come from the scanner plugin's library (not yet verified on a device)
+  to come from the scanner plugin's library (not yet verified on a device).
+  `ACCESS_MEDIA_LOCATION` for photo import: without it Android removes the
+  location from picked photos. Android's newer photo picker always removes
+  it, so import uses the document picker instead.
 
 Location permission is requested when the app first starts; camera permission
-the first time you scan.
+the first time you scan; on Android, media location the first time you import.
 
 ## Persistence
 
-Each reading is saved to a `readings` table: latitude, longitude, accuracy,
-altitude, recorded-at timestamp, `code` (the scanned ID, at most 25
+Each reading is saved to a `readings` table: latitude, longitude, accuracy
+(empty for imported photos that don't record it), altitude, recorded-at timestamp, `code` (the scanned ID, at most 25
 characters), `locality`, `locality2`, `taxon`, `collector`, and from the
 region lookup `region`, `place_source` (e.g. `nominatim`; empty until looked
 up) and `place_details` (the service's full response as JSON). See `src/db.ts` for the schema and
@@ -144,6 +160,7 @@ A failed save is reported in an alert rather than crashing the app.
 - `src/db.ts` — `ReadingsStore` (SQLite on native, in-memory stub on web) and schema
 - `src/export.ts` — JSON and CSV formatting for copying and downloading readings
 - `src/fileSaver.ts` — JS side of the app's own `FileSaver` plugin
+- `src/photoImport.ts` — JS side of the app's own `PhotoImport` plugin, and turning a photo's metadata into a reading
 - `src/printer.ts` — JS side of the app's own `Printer` plugin
 - `src/geocoder.ts` — the `ReverseGeocoder` interface the app uses for region lookups
 - `src/nominatim.ts` — its Nominatim implementation (request queue, cache, region format)
