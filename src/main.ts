@@ -2,6 +2,7 @@ import './style.css';
 import { Geolocation, type Position } from '@capacitor/geolocation';
 import { Capacitor } from '@capacitor/core';
 import { SplashScreen } from '@capacitor/splash-screen';
+import { Clipboard } from '@capacitor/clipboard';
 import {
   CapacitorBarcodeScanner,
   CapacitorBarcodeScannerTypeHint,
@@ -14,8 +15,10 @@ import {
   type ReadingsStore,
 } from './db';
 import { Printer } from './printer';
+import { FileSaver } from './fileSaver';
 import type { ReverseGeocoder } from './geocoder';
 import { NominatimGeocoder } from './nominatim';
+import { exportFilename, formatReading, toCSV, toJSON, type ExportFormat } from './export';
 
 const STALE_FIX_MS = 3000;
 // Hysteresis: turn green at GOOD_ACCURACY_M or better, but only drop back to
@@ -36,7 +39,22 @@ app.innerHTML = `
     <ol id="history-list" class="history-list"></ol>
   </main>
   <div id="action-bar" class="action-bar" hidden>
-    <button id="labels-btn" type="button" class="text-btn" disabled>Labels</button>
+    <div class="action-group">
+      <button id="labels-btn" type="button" class="text-btn" disabled>Labels</button>
+      <button id="copy-btn" type="button" class="icon-btn" aria-label="Copy selected readings" disabled>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="9" y="9" width="13" height="13" rx="2" />
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+        </svg>
+      </button>
+      <button id="download-btn" type="button" class="icon-btn" aria-label="Download selected readings" disabled>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <polyline points="7 10 12 15 17 10" />
+          <line x1="12" y1="15" x2="12" y2="3" />
+        </svg>
+      </button>
+    </div>
     <button id="delete-btn" type="button" class="icon-btn" aria-label="Delete selected readings" disabled>
       <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
         <polyline points="3 6 5 6 21 6" />
@@ -113,7 +131,7 @@ app.innerHTML = `
         <div id="labels-failed" class="dialog-actions" hidden>
           <button id="labels-cancel" type="button" class="secondary-btn">Cancel</button>
           <button id="labels-retry" type="button" class="secondary-btn">Retry</button>
-          <button id="labels-print-anyway" type="button">Print anyway</button>
+          <button id="labels-continue" type="button">Continue anyway</button>
         </div>
       </div>
       <div id="labels-content">
@@ -122,6 +140,27 @@ app.innerHTML = `
           <div id="label-preview" class="label-output"></div>
         </div>
       </div>
+    </div>
+  </dialog>
+  <dialog id="export-menu" class="inspector" aria-labelledby="export-title">
+    <h2 id="export-title"></h2>
+    <form method="dialog">
+      <div class="segmented" role="radiogroup" aria-label="Format">
+        <label><input type="radio" name="export-format" value="json" /><span>JSON</span></label>
+        <label><input type="radio" name="export-format" value="csv" /><span>CSV</span></label>
+      </div>
+      <div class="dialog-actions">
+        <button type="submit" value="cancel" class="secondary-btn">Cancel</button>
+        <button id="export-submit" type="submit" value="export"></button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="export-status" class="inspector" aria-labelledby="export-message">
+    <p id="export-message" class="export-message"></p>
+    <div class="dialog-actions">
+      <button id="export-cancel" type="button" class="secondary-btn">Cancel</button>
+      <button id="export-retry" type="button" class="secondary-btn" hidden>Retry</button>
+      <button id="export-continue" type="button" hidden>Continue anyway</button>
     </div>
   </dialog>
   <dialog id="confirm-delete" class="inspector" aria-labelledby="confirm-title">
@@ -156,7 +195,14 @@ const labelsFailed = document.querySelector<HTMLDivElement>('#labels-failed')!;
 const labelsContent = document.querySelector<HTMLDivElement>('#labels-content')!;
 const labelsCancelBtn = document.querySelector<HTMLButtonElement>('#labels-cancel')!;
 const labelsRetryBtn = document.querySelector<HTMLButtonElement>('#labels-retry')!;
-const labelsPrintAnywayBtn = document.querySelector<HTMLButtonElement>('#labels-print-anyway')!;
+const labelsContinueBtn = document.querySelector<HTMLButtonElement>('#labels-continue')!;
+const copyBtn = document.querySelector<HTMLButtonElement>('#copy-btn')!;
+const downloadBtn = document.querySelector<HTMLButtonElement>('#download-btn')!;
+const exportMenuEl = document.querySelector<HTMLDialogElement>('#export-menu')!;
+const exportStatusEl = document.querySelector<HTMLDialogElement>('#export-status')!;
+const exportCancelBtn = document.querySelector<HTMLButtonElement>('#export-cancel')!;
+const exportRetryBtn = document.querySelector<HTMLButtonElement>('#export-retry')!;
+const exportContinueBtn = document.querySelector<HTMLButtonElement>('#export-continue')!;
 
 // What gets printed: a copy of the labels outside #app, shown only by the
 // print stylesheet (which hides #app, and with it the open labels sheet).
@@ -195,16 +241,6 @@ async function resolvePlace(r: Reading): Promise<Reading> {
 const set = (id: string, value: string) => {
   document.querySelector<HTMLElement>(`#${id}`)!.textContent = value;
 };
-
-// Local date as `yyyy-mm-dd` and time as `hh:mm` (24-hour).
-function formatReading(r: Reading): { date: string; time: string } {
-  const d = new Date(r.recordedAt);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return {
-    date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
-    time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
-  };
-}
 
 // The reading shown in the inspector, so a region that arrives after the
 // inspector has closed (or moved on) isn't shown on the wrong reading.
@@ -264,6 +300,8 @@ function renderSelection() {
   btn.hidden = selecting;
   deleteBtn.disabled = selected.size === 0;
   labelsBtn.disabled = selected.size === 0;
+  copyBtn.disabled = selected.size === 0;
+  downloadBtn.disabled = selected.size === 0;
   for (const item of historyEl.querySelectorAll<HTMLButtonElement>('.reading')) {
     const isSelected = selected.has(Number(item.dataset.id));
     item.classList.toggle('selected', isSelected);
@@ -403,6 +441,28 @@ function showLabelsStatus(message: string, failed = false) {
   labelsPrintBtn.disabled = true;
 }
 
+// Look up places for the readings that lack one, calling `progress` with a
+// status message before the first lookup and as each one settles. Resolves
+// with a failure message, or null when every reading has a place.
+async function lookUpPlaces(rs: Reading[], progress: (message: string) => void): Promise<string | null> {
+  const pending = rs.filter((r) => r.place == null);
+  if (pending.length === 0) return null;
+  let settled = 0;
+  const report = () => progress(`Reverse geocoding… ${settled} of ${pending.length}`);
+  report();
+  const results = await Promise.allSettled(
+    pending.map((r) =>
+      resolvePlace(r).finally(() => {
+        settled++;
+        report();
+      }),
+    ),
+  );
+  const failed = results.filter((res) => res.status === 'rejected').length;
+  if (failed === 0) return null;
+  return `Couldn't look up the region for ${failed} of ${pending.length} reading${pending.length === 1 ? '' : 's'}.`;
+}
+
 // Each opening of the sheet (and each retry) is a new run; lookups from an
 // earlier run still save their results but no longer update the sheet.
 let labelsRun = 0;
@@ -410,31 +470,12 @@ let labelsRun = 0;
 // Look up regions for the selected readings that lack one, then show the labels.
 async function prepareLabels() {
   const run = ++labelsRun;
-  const pending = selectedReadings().filter((r) => r.place == null);
-  if (pending.length === 0) {
-    renderLabels();
-    return;
-  }
-  let settled = 0;
-  const progress = () => `Reverse geocoding… ${settled} of ${pending.length}`;
-  showLabelsStatus(progress());
-  const results = await Promise.allSettled(
-    pending.map((r) =>
-      resolvePlace(r).finally(() => {
-        settled++;
-        if (run === labelsRun) showLabelsStatus(progress());
-      }),
-    ),
-  );
+  const failure = await lookUpPlaces(selectedReadings(), (message) => {
+    if (run === labelsRun) showLabelsStatus(message);
+  });
   if (run !== labelsRun) return;
-  const failed = results.filter((res) => res.status === 'rejected').length;
-  if (failed === 0) renderLabels();
-  else {
-    showLabelsStatus(
-      `Couldn't look up the region for ${failed} of ${pending.length} reading${pending.length === 1 ? '' : 's'}.`,
-      true,
-    );
-  }
+  if (failure) showLabelsStatus(failure, true);
+  else renderLabels();
 }
 
 labelsBtn.addEventListener('click', () => {
@@ -478,14 +519,141 @@ async function printLabels() {
 labelsPrintBtn.addEventListener('click', printLabels);
 
 // Show the labels, without a region on the readings that failed, and print.
-labelsPrintAnywayBtn.addEventListener('click', () => {
+labelsContinueBtn.addEventListener('click', () => {
   labelsRun++;
   renderLabels();
   printLabels();
 });
 
+// Copy and Download: choose JSON or CSV (each action preselects its own last
+// choice), look up any missing regions as for labels, then put the selected
+// readings on the clipboard or save them to a file.
+type ExportAction = 'copy' | 'download';
+
+const EXPORT_ACTIONS: Record<ExportAction, { verb: string; formatKey: string }> = {
+  copy: { verb: 'Copy', formatKey: 'copyFormat' },
+  download: { verb: 'Download', formatKey: 'downloadFormat' },
+};
+
+function loadExportFormat(action: ExportAction): ExportFormat {
+  try {
+    return localStorage.getItem(EXPORT_ACTIONS[action].formatKey) === 'csv' ? 'csv' : 'json';
+  } catch {
+    return 'json';
+  }
+}
+
+function saveExportFormat(action: ExportAction, format: ExportFormat) {
+  try {
+    localStorage.setItem(EXPORT_ACTIONS[action].formatKey, format);
+  } catch {
+    // Not worth bothering the user about.
+  }
+}
+
+// The export being set up or run.
+let exportAction: ExportAction = 'copy';
+let exportFormat: ExportFormat = 'json';
+
+function openExportMenu(action: ExportAction) {
+  exportAction = action;
+  const n = selected.size;
+  const { verb } = EXPORT_ACTIONS[action];
+  set('export-title', `${verb} ${n} reading${n === 1 ? '' : 's'} as`);
+  set('export-submit', verb);
+  const format = loadExportFormat(action);
+  exportMenuEl.querySelector<HTMLInputElement>(`input[value="${format}"]`)!.checked = true;
+  exportMenuEl.returnValue = '';
+  exportMenuEl.showModal();
+}
+
+copyBtn.addEventListener('click', () => openExportMenu('copy'));
+downloadBtn.addEventListener('click', () => openExportMenu('download'));
+
+exportMenuEl.addEventListener('close', () => {
+  if (exportMenuEl.returnValue !== 'export') return;
+  const checked = exportMenuEl.querySelector<HTMLInputElement>('input[name="export-format"]:checked');
+  exportFormat = checked?.value === 'csv' ? 'csv' : 'json';
+  saveExportFormat(exportAction, exportFormat);
+  prepareExport();
+});
+
+// Runs work as for labels: closing the status dialog makes earlier lookups stale.
+let exportRun = 0;
+
+function showExportStatus(message: string, failed = false) {
+  set('export-message', message);
+  exportRetryBtn.hidden = !failed;
+  exportContinueBtn.hidden = !failed;
+  if (!exportStatusEl.open) exportStatusEl.showModal();
+}
+
+async function prepareExport() {
+  const run = ++exportRun;
+  const failure = await lookUpPlaces(selectedReadings(), (message) => {
+    if (run === exportRun) showExportStatus(message);
+  });
+  if (run !== exportRun) return;
+  if (failure) {
+    showExportStatus(failure, true);
+    return;
+  }
+  exportStatusEl.close();
+  exportReadings();
+}
+
+async function exportReadings() {
+  const chosen = selectedReadings();
+  const format = exportFormat;
+  const text = format === 'csv' ? toCSV(chosen) : toJSON(chosen);
+  const n = chosen.length;
+  const what = `${n} reading${n === 1 ? '' : 's'} as ${format.toUpperCase()}`;
+  try {
+    if (exportAction === 'copy') {
+      await Clipboard.write({ string: text });
+      showToast(`Copied ${what}`);
+    } else {
+      const { saved } = await FileSaver.saveFile({
+        filename: exportFilename(format),
+        contents: text,
+        mimeType: format === 'csv' ? 'text/csv' : 'application/json',
+      });
+      if (saved) showToast(`Saved ${what}`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    alert(`Readings not ${exportAction === 'copy' ? 'copied' : 'saved'}: ${msg}`);
+  }
+}
+
+exportCancelBtn.addEventListener('click', () => exportStatusEl.close());
+exportRetryBtn.addEventListener('click', prepareExport);
+exportContinueBtn.addEventListener('click', () => {
+  exportStatusEl.close();
+  exportReadings();
+});
+
+// Also covers closing by other means, such as Android's back button.
+exportStatusEl.addEventListener('close', () => {
+  exportRun++;
+});
+
+// A brief confirmation at the bottom of the screen.
+const toastEl = document.createElement('div');
+toastEl.className = 'toast';
+toastEl.setAttribute('role', 'status');
+document.body.append(toastEl);
+let toastTimer: ReturnType<typeof setTimeout> | undefined;
+
+function showToast(message: string) {
+  toastEl.textContent = message;
+  toastEl.classList.add('visible');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('visible'), 2000);
+}
+
 // Tapping the backdrop (outside the dialog box) closes a dialog.
-for (const dialog of [inspectorEl, confirmEl]) {
+for (const dialog of [inspectorEl, confirmEl, exportMenuEl]) {
   dialog.addEventListener('click', (e) => {
     if (e.target === dialog) dialog.close();
   });

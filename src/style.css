@@ -140,6 +140,12 @@ button:hover:not(:disabled) {
   align-items: center;
 }
 
+/* Labels and the copy and download buttons, together on the left. */
+.action-group {
+  display: flex;
+  align-items: center;
+}
+
 #fix-btn {
   flex: none;
   display: flex;
@@ -472,6 +478,69 @@ dd {
   text-align: center;
 }
 
+/* Copy/Download format picker: two options in one rounded strip, iOS-style. */
+.segmented {
+  display: flex;
+  margin: 0.75rem 0 1.25rem;
+  padding: 2px;
+  background: var(--border);
+  border-radius: 0.6rem;
+}
+
+.segmented label {
+  flex: 1;
+}
+
+.segmented input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.segmented span {
+  display: block;
+  padding: 0.45rem;
+  text-align: center;
+  font-weight: 600;
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+
+/* Accent fill, so the choice is clear in both themes. No focus ring: the
+   dialog focuses the checked option on opening, which would look like a
+   second selection marker. */
+.segmented input:checked + span {
+  color: #fff;
+  background: var(--accent);
+}
+
+.export-message {
+  margin: 0.25rem 0 1.25rem;
+  text-align: center;
+}
+
+/* Confirmation after copying or saving, floating above the action bar. */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(max(1rem, env(safe-area-inset-bottom)) + 4.5rem);
+  transform: translateX(-50%);
+  max-width: calc(100% - 2rem);
+  padding: 0.6rem 1rem;
+  color: var(--card);
+  background: var(--fg);
+  border-radius: 0.65rem;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.toast.visible {
+  opacity: 1;
+}
+
 /* Shown in place of the labels while regions are looked up, or if that fails. */
 .labels-status {
   padding: 2rem 0.5rem;
@@ -572,7 +641,8 @@ dd {
   }
 
   #app,
-  dialog {
+  dialog,
+  .toast {
     display: none !important;
   }
 

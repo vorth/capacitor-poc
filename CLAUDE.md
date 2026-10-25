@@ -37,7 +37,8 @@ dependencies change.
   any new plugin must ship a `Package.swift`.
 - Plugins: `@capacitor/geolocation`, `@capacitor/barcode-scanner` (official
   Ionic/OutSystems live scanner), `@capacitor-community/sqlite`,
-  `@capacitor/splash-screen`.
+  `@capacitor/splash-screen`, `@capacitor/clipboard` (`navigator.clipboard` is
+  unreliable in Android WebView).
 
 ## Files
 
@@ -53,6 +54,11 @@ dependencies change.
   region formatting. Uses `CapacitorHttp` so it can send a User-Agent.
 - `dev-docs/reverse-geocoding.md` — design of the region lookup, including
   the decisions behind it (temperature and elevation lookups dropped).
+- `src/export.ts` — `toJSON` / `toCSV` / `exportFilename` for Copy and
+  Download, and `formatReading` (local date and time, shared with labels and
+  the inspector).
+- `src/fileSaver.ts` — `FileSaver` plugin wrapper (`saveFile`); browser
+  download on web.
 - `src/printer.ts` — `Printer` plugin wrapper (`printWebView`); falls back to
   `window.print()` on web.
 - `src/style.css` — light/dark themes via CSS variables on `:root`; iOS-like
@@ -60,9 +66,17 @@ dependencies change.
   `CheckrSpot/Resources/styles.css`) and the `@media print` rules.
 - `ios/App/App/PrinterPlugin.swift` — the app's own `Printer` plugin plus
   `AppViewController` (a `CAPBridgeViewController` subclass that registers
-  it; `SceneDelegate` uses it as the root view controller).
-- `android/app/src/main/java/org/vorthmann/checkrspot/PrinterPlugin.java` —
-  Android `Printer` plugin, registered in `MainActivity`.
+  it and `FileSaverPlugin`; `SceneDelegate` uses it as the root view
+  controller).
+- `ios/App/App/FileSaverPlugin.swift` — the app's own `FileSaver` plugin:
+  writes a temp file and presents `UIDocumentPickerViewController(forExporting:)`.
+  Added to `project.pbxproj` by hand (the project doesn't use synchronized
+  folders), as was `PrinterPlugin.swift`.
+- `android/app/src/main/java/org/vorthmann/checkrspot/PrinterPlugin.java` and
+  `FileSaverPlugin.java` (`ACTION_CREATE_DOCUMENT`, no storage permission) —
+  Android plugins, registered in `MainActivity`. No official Capacitor plugin
+  offers a "save as" dialog, hence our own (the user chose this over
+  Filesystem + Share).
 - `ios/App/App/Info.plist` — camera and location usage strings.
 - `android/variables.gradle` — `minSdkVersion = 26` (required by the scanner).
 
@@ -132,13 +146,13 @@ locality + locality2 + taxon + collector.
   this reason.
 - **Selection mode** (toolbar Select/Cancel): rows toggle iOS-style
   checkmarks, the capture button is replaced by an action bar with a
-  Labels button (left) and a delete button (right), and deletion asks for
-  confirmation.
+  Labels button, copy and download icons (left) and a delete button (right), and
+  deletion asks for confirmation.
 - **Labels**: a full-screen sheet that slides up, previewing labels for the
   selected readings (oldest first) at 2× via CSS `zoom`, with Done and Print.
   If any selected reading has no place yet, the sheet first shows
   "Reverse geocoding… n of m" (Print disabled); on failures it shows
-  Cancel / Retry / Print anyway (renders labels without those regions and
+  Cancel / Retry / Continue anyway (renders labels without those regions and
   prints). Each opening or retry is a run (`labelsRun`); stale runs' results
   are saved but don't touch the sheet. Region is the first line of the
   label's locality block.
@@ -148,6 +162,22 @@ locality + locality2 + taxon + collector.
   copy. WKWebView and Android WebView ignore `window.print()`, hence the
   plugin. Label text is 3pt (~4px); Android WebView enlarges text under 8px by
   default, so the plugin's `load()` lowers the minimum font size.
+- **Copy and Download** (copy and download icons) share one flow
+  (`ExportAction`): a small dialog picks JSON or CSV (segmented control; the
+  selected segment is accent-filled, with no focus ring because the dialog
+  autofocuses it), each action preselecting its own last choice
+  (`localStorage` `copyFormat` / `downloadFormat`). Then the same region
+  lookup as Labels runs (`lookUpPlaces`, shared), shown in a modal status
+  dialog with Cancel, and Retry / Continue anyway on failure (runs via
+  `exportRun`). Then `Clipboard.write` or `FileSaver.saveFile` (file name
+  `checkrspot-yyyy-mm-dd-hhmm.json|csv`), and a brief toast (none if the save
+  dialog is cancelled). Readings oldest first.
+  JSON: array of objects, keys `id` (the code), `timestamp` (ISO 8601, local
+  with offset), `date`, `time`, `latitude`, `longitude` (5 dp), `accuracy`,
+  `altitude` (whole m), `region`, `locality`, `locality2`, `taxon`,
+  `collector` (verbatim), `revGeocode` (the whole `place_details`); null
+  fields omitted. CSV (RFC 4180, CRLF): `id,date,time,latitude,longitude,
+  accuracy_m,altitude_m,region,locality,locality2,taxon,collector`.
 - Errors are shown with `alert()`.
 
 ## App identity and App Store plan

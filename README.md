@@ -18,6 +18,10 @@ database.
 - **Printing:** a small plugin inside the app (`PrinterPlugin` in `ios/App/App/`
   and the Android `org.vorthmann.checkrspot` package) that opens the system
   print dialog for the web view; `window.print()` on web
+- **Clipboard:** [`@capacitor/clipboard`](https://capacitorjs.com/docs/apis/clipboard)
+- **Saving files:** another small in-app plugin (`FileSaverPlugin`) that opens
+  the system save dialog (iOS document picker, Android "save as"); no
+  permissions needed. A browser download on web
 - **Reverse geocoding:** OpenStreetMap's [Nominatim](https://nominatim.org/),
   called with `CapacitorHttp` (part of `@capacitor/core`) — see
   [Region lookup](#region-lookup)
@@ -40,7 +44,16 @@ database.
   ± accuracy, date and time, elevation, collector), the taxon if there is one, and the ID in large type.
   If any of the readings still need their region looked up, the sheet shows
   "Reverse geocoding…" first; if a lookup fails you can **Retry**, **Cancel**,
-  or **Print anyway** without the missing regions.
+  or **Continue anyway** without the missing regions.
+- The copy button next to **Labels** copies the selected readings (oldest
+  first) to the clipboard as **JSON** or **CSV**; the format you chose last is
+  preselected. Missing regions are looked up first, as for labels. JSON
+  includes the full reverse-geocoding response (`revGeocode`, which carries
+  the OpenStreetMap licence notice) and leaves out empty fields; CSV has a
+  header row and fixed columns.
+- The download button next to it saves the same JSON or CSV to a file
+  (e.g. `checkrspot-2026-10-25-1432.csv`) wherever you choose in the system
+  save dialog. It remembers its own last format, separately from copy.
 
 ## Region lookup
 
@@ -48,7 +61,7 @@ Each reading gets a short **region** such as `US-AZ, Pima Co.` (the ISO region
 code, then the county or nearest equivalent) from Nominatim. The app is often
 used without a network, so nothing is looked up when a reading is captured.
 A lookup happens only when you open a reading in the list (for that reading)
-or tap **Labels** (for the selected readings that don't have one yet). Results
+or tap **Labels**, copy or download (for the selected readings that don't have one yet). Results
 are saved, so each reading is looked up once.
 
 Nominatim's [usage policy](https://operations.osmfoundation.org/policies/nominatim/)
@@ -129,6 +142,8 @@ A failed save is reported in an alert rather than crashing the app.
 
 - `src/main.ts` — UI, location watching, scanning and the capture flow
 - `src/db.ts` — `ReadingsStore` (SQLite on native, in-memory stub on web) and schema
+- `src/export.ts` — JSON and CSV formatting for copying and downloading readings
+- `src/fileSaver.ts` — JS side of the app's own `FileSaver` plugin
 - `src/printer.ts` — JS side of the app's own `Printer` plugin
 - `src/geocoder.ts` — the `ReverseGeocoder` interface the app uses for region lookups
 - `src/nominatim.ts` — its Nominatim implementation (request queue, cache, region format)
